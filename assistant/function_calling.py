@@ -387,7 +387,7 @@ class FunctionExecutor:
             success = await self.ha.call_service(
                 "persistent_notification", "create", {"message": message}
             )
-        return {"success": success, "message": f"Benachrichtigung gesendet"}
+        return {"success": success, "message": "Benachrichtigung gesendet"}
 
     async def _exec_get_entity_state(self, args: dict) -> dict:
         entity_id = args["entity_id"]

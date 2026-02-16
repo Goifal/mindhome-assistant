@@ -144,17 +144,17 @@ class AssistantBrain:
                 # WebSocket: Aktion melden
                 await emit_action(func_name, func_args, result)
 
-            # Wenn Aktionen, aber keine Text-Antwort: Standard-Bestaetigung
-            if executed_actions and not response_text:
-                if all(a["result"].get("success", False) for a in executed_actions if isinstance(a["result"], dict)):
-                    response_text = "Erledigt."
-                else:
-                    failed = [
-                        a["result"].get("message", "")
-                        for a in executed_actions
-                        if isinstance(a["result"], dict) and not a["result"].get("success", False)
-                    ]
-                    response_text = f"Problem: {', '.join(failed)}" if failed else "Teilweise erledigt."
+        # Wenn Aktionen, aber keine Text-Antwort: Standard-Bestaetigung
+        if executed_actions and not response_text:
+            if all(a["result"].get("success", False) for a in executed_actions if isinstance(a["result"], dict)):
+                response_text = "Erledigt."
+            else:
+                failed = [
+                    a["result"].get("message", "")
+                    for a in executed_actions
+                    if isinstance(a["result"], dict) and not a["result"].get("success", False)
+                ]
+                response_text = f"Problem: {', '.join(failed)}" if failed else "Teilweise erledigt."
 
         # 8. Im Gedaechtnis speichern
         await self.memory.add_conversation("user", text)

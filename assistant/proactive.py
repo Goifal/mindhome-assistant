@@ -2,6 +2,9 @@
 Proactive Manager - Der MindHome Assistant spricht von sich aus.
 Hoert auf Events von Home Assistant / MindHome und entscheidet ob
 eine proaktive Meldung sinnvoll ist.
+
+FIX: self.brain.autonomy.current_level -> self.brain.autonomy.level
+     (Property heisst 'level' in AutonomyManager, nicht 'current_level')
 """
 
 import asyncio
@@ -106,10 +109,10 @@ class ProactiveManager:
                         "type": "auth",
                         "access_token": settings.ha_token,
                     })
-                    auth_result = await ws.receive_json()
-                    if auth_result.get("type") != "auth_ok":
-                        logger.error("HA WebSocket Auth fehlgeschlagen")
-                        return
+                auth_result = await ws.receive_json()
+                if auth_result.get("type") != "auth_ok":
+                    logger.error("HA WebSocket Auth fehlgeschlagen")
+                    return
 
                 logger.info("HA WebSocket verbunden")
 
@@ -214,7 +217,7 @@ class ProactiveManager:
 
         # Autonomie-Level pruefen
         if urgency != CRITICAL:
-            level = self.brain.autonomy.current_level
+            level = self.brain.autonomy.level
             if level < 2:  # Level 1 = nur Befehle
                 return
 

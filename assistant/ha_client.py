@@ -1,5 +1,13 @@
 """
 Home Assistant API Client - Kommunikation mit HA und MindHome
+
+FIX: API-Endpoints an die tatsaechlichen MindHome Add-on Routes angepasst:
+  /api/system/health  -> /api/health
+  /api/engines/status  -> entfernt (existiert nicht als einzelner Endpoint)
+  /api/presence        -> /api/persons
+  /api/energy/current  -> /api/energy/summary
+  /api/comfort/status  -> /api/health/comfort
+  /api/security/status -> /api/security/dashboard
 """
 
 import logging
@@ -65,31 +73,35 @@ class HomeAssistantClient:
 
     async def get_mindhome_status(self) -> Optional[dict]:
         """MindHome System-Status."""
-        return await self._get_mindhome("/api/system/health")
-
-    async def get_engine_status(self) -> Optional[dict]:
-        """Status aller MindHome Engines."""
-        return await self._get_mindhome("/api/engines/status")
+        return await self._get_mindhome("/api/health")
 
     async def get_presence(self) -> Optional[dict]:
         """Anwesenheitsdaten von MindHome."""
-        return await self._get_mindhome("/api/presence")
+        return await self._get_mindhome("/api/persons")
 
     async def get_energy(self) -> Optional[dict]:
         """Energie-Daten von MindHome."""
-        return await self._get_mindhome("/api/energy/current")
+        return await self._get_mindhome("/api/energy/summary")
 
     async def get_comfort(self) -> Optional[dict]:
         """Komfort-Daten von MindHome."""
-        return await self._get_mindhome("/api/comfort/status")
+        return await self._get_mindhome("/api/health/comfort")
 
     async def get_security(self) -> Optional[dict]:
         """Sicherheits-Status von MindHome."""
-        return await self._get_mindhome("/api/security/status")
+        return await self._get_mindhome("/api/security/dashboard")
 
     async def get_patterns(self) -> Optional[dict]:
         """Erkannte Muster von MindHome."""
         return await self._get_mindhome("/api/patterns")
+
+    async def get_health_dashboard(self) -> Optional[dict]:
+        """Gesundheits-Dashboard von MindHome."""
+        return await self._get_mindhome("/api/health/dashboard")
+
+    async def get_day_phases(self) -> Optional[dict]:
+        """Tagesphasen von MindHome."""
+        return await self._get_mindhome("/api/day-phases")
 
     # ----- Interne HTTP Methoden -----
 

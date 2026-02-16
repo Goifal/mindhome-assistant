@@ -31,21 +31,21 @@ brain = AssistantBrain()
 async def lifespan(app: FastAPI):
     """Startup und Shutdown."""
     logger.info("=" * 50)
-    logger.info("  MindHome Assistant v0.1.0 startet...")
+    logger.info(" MindHome Assistant v0.1.0 startet...")
     logger.info("=" * 50)
     await brain.initialize()
 
     health = await brain.health_check()
     for component, status in health["components"].items():
         icon = "OK" if status == "connected" else "!!"
-        logger.info("  [%s] %s: %s", icon, component, status)
+        logger.info(" [%s] %s: %s", icon, component, status)
 
-    logger.info("  Autonomie: Level %d (%s)",
-                health["autonomy"]["level"],
-                health["autonomy"]["name"])
+    logger.info(" Autonomie: Level %d (%s)",
+        health["autonomy"]["level"],
+        health["autonomy"]["name"])
     logger.info("=" * 50)
-    logger.info("  MindHome Assistant bereit auf %s:%d",
-                settings.assistant_host, settings.assistant_port)
+    logger.info(" MindHome Assistant bereit auf %s:%d",
+        settings.assistant_host, settings.assistant_port)
     logger.info("=" * 50)
 
     yield
@@ -94,8 +94,8 @@ async def chat(request: ChatRequest):
     Hauptendpoint - Text an den Assistenten senden.
 
     Beispiel:
-        POST /api/assistant/chat
-        {"text": "Mach das Licht im Wohnzimmer aus", "person": "Max"}
+    POST /api/assistant/chat
+    {"text": "Mach das Licht im Wohnzimmer aus", "person": "Max"}
     """
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="Kein Text angegeben")
@@ -148,16 +148,16 @@ async def websocket_endpoint(websocket: WebSocket):
     WebSocket fuer Echtzeit-Events.
 
     Events (Server -> Client):
-        assistant.speaking  - Assistent spricht (Text)
-        assistant.thinking  - Assistent denkt nach
-        assistant.action    - Assistent fuehrt Aktion aus
-        assistant.listening - Assistent hoert zu
-        assistant.proactive - Proaktive Meldung
+    assistant.speaking - Assistent spricht (Text)
+    assistant.thinking - Assistent denkt nach
+    assistant.action - Assistent fuehrt Aktion aus
+    assistant.listening - Assistent hoert zu
+    assistant.proactive - Proaktive Meldung
 
     Events (Client -> Server):
-        assistant.text     - Text-Eingabe
-        assistant.feedback - Feedback auf Meldung
-        assistant.interrupt - Unterbrechung
+    assistant.text - Text-Eingabe
+    assistant.feedback - Feedback auf Meldung
+    assistant.interrupt - Unterbrechung
     """
     await ws_manager.connect(websocket)
     try:
@@ -192,7 +192,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             except json.JSONDecodeError:
                 await ws_manager.send_personal(
-                    websocket, "error", {"message": "Ungültiges JSON"}
+                    websocket, "error", {"message": "Ungueltiges JSON"}
                 )
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
