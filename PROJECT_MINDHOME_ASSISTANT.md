@@ -1,6 +1,6 @@
-# Project Jarvis - KI-Sprachassistent fuer MindHome
+# MindHome Assistant - KI-Sprachassistent fuer MindHome
 
-> "Jarvis ist kein Feature. Jarvis ist das Gefuehl, dass dein Haus dich kennt."
+> "MindHome Assistant ist kein Feature. MindHome Assistant ist das Gefuehl, dass dein Haus dich kennt."
 
 ---
 
@@ -8,15 +8,15 @@
 
 1. [Vision](#vision)
 2. [Hardware-Setup (Split-Architektur)](#hardware-setup-split-architektur)
-3. [Jarvis-PC Setup Guide](#jarvis-pc-setup-guide)
+3. [Assistant-PC Setup Guide](#assistant-pc-setup-guide)
 4. [LLM-Modell Empfehlung](#llm-modell-empfehlung)
 5. [Latenz-Analyse](#latenz-analyse)
 6. [Gesamtarchitektur](#gesamtarchitektur)
 7. [Phase 1: Fundament](#phase-1-fundament)
 8. [Engine Layer](#engine-layer)
-9. [Jarvis Layer (Sprach-KI)](#jarvis-layer-sprach-ki)
+9. [Assistant Layer (Sprach-KI)](#assistant-layer-sprach-ki)
 10. [Proactive Layer](#proactive-layer)
-11. [Das Jarvis-Feeling](#das-jarvis-feeling)
+11. [Das MindHome-Feeling](#das-mindhome-feeling)
 12. [Phase 2-7: Perfektion](#phase-2-7-perfektion)
 13. [Technische Details](#technische-details)
 14. [Autonomie-Level](#autonomie-level)
@@ -28,9 +28,9 @@
 
 MindHome Phase 1-5 macht das Haus intelligent. Es lernt Muster, optimiert Energie, erkennt Anomalien. Aber es reagiert nur - es hat keine Stimme, keine Persoenlichkeit.
 
-**Project Jarvis** gibt MindHome eine Seele.
+**MindHome Assistant** gibt MindHome eine Seele.
 
-Jarvis ist ein lokaler, privater Sprachassistent der:
+MindHome Assistant ist ein lokaler, privater Sprachassistent der:
 - **Dein Haus kennt** - jeder Raum, jedes Geraet, jede Temperatur
 - **Dich kennt** - deine Gewohnheiten, Vorlieben, deinen Tagesablauf
 - **Handelt** - nicht nur redet, sondern Dinge tut
@@ -44,13 +44,13 @@ Jarvis ist ein lokaler, privater Sprachassistent der:
 
 ### Warum zwei PCs?
 
-| Aspekt | Alles auf einem PC | Split (HAOS + Jarvis-PC) |
+| Aspekt | Alles auf einem PC | Split (HAOS + Assistant-PC) |
 |--------|-------------------|--------------------------|
 | **HAOS Stabilitaet** | LLM frisst CPU/RAM, HA langsamer | HA laeuft ungestoert |
 | **LLM Groesse** | Begrenzt durch HA-RAM | Ganzer PC nur fuer KI |
 | **GPU moeglich** | Nicht in HAOS | Ja! GPU = 10x schneller |
 | **Updates** | LLM-Update kann HA stoeren | Unabhaengig updaten |
-| **Ausfallsicherheit** | Alles faellt zusammen aus | HA + MindHome laufen ohne Jarvis |
+| **Ausfallsicherheit** | Alles faellt zusammen aus | HA + MindHome laufen ohne den Assistant |
 | **Netzwerk-Latenz** | 0 ms | <1 ms (LAN) - irrelevant |
 
 ### PC 1: HAOS (bestehendes System)
@@ -64,13 +64,13 @@ Jarvis ist ein lokaler, privater Sprachassistent der:
 | **OS** | Home Assistant OS |
 | **Aufgabe** | HA + MindHome + Whisper + Piper |
 
-### PC 2: Jarvis Server (separater PC)
+### PC 2: MindHome Assistant Server (separater PC)
 
 | Komponente | Aufgabe |
 |-----------|---------|
 | **OS** | Ubuntu Server 24.04 LTS |
 | **Ollama** | LLM Inference (Qwen 2.5) |
-| **Jarvis Service** | Context Builder, Personality, Action Planner |
+| **Assistant Service** | Context Builder, Personality, Action Planner |
 | **ChromaDB** | Langzeitgedaechtnis (Vektor-DB) |
 | **Redis** | Cache fuer schnelle Zugriffe |
 | **Optional** | GPU fuer schnellere Inference |
@@ -98,7 +98,7 @@ Lokales Netzwerk (LAN, <1ms Latenz)
           |  REST API + WebSocket (<1ms)
           |
 |  +--------------------------------------+
-|  | PC 2: Jarvis Server                   |
+|  | PC 2: MindHome Assistant Server                   |
 |  |   Ubuntu Server 24.04 LTS             |
 |  |                                       |
 |  |   Docker                              |
@@ -108,7 +108,7 @@ Lokales Netzwerk (LAN, <1ms Latenz)
 |  |     +-- ChromaDB (:8100)             |
 |  |     +-- Redis (:6379)                |
 |  |                                       |
-|  |   Jarvis Service (:8200)              |
+|  |   Assistant Service (:8200)              |
 |  |     +-- Context Builder              |
 |  |     +-- Personality Engine           |
 |  |     +-- Action Planner               |
@@ -129,7 +129,7 @@ User spricht -> [Mikrofon]
                     |
                     | HTTP POST (Text + Kontext-Anfrage)
                     |
-         PC 2 (Jarvis):
+         PC 2 (MindHome Assistant):
                     |
               [Context Builder]
                     | holt Daten von PC 1 via REST API (<1ms)
@@ -149,15 +149,15 @@ User spricht -> [Mikrofon]
 
 ---
 
-## Jarvis-PC Setup Guide
+## Assistant-PC Setup Guide
 
-### Schritt-fuer-Schritt: Vom leeren PC zum Jarvis Server
+### Schritt-fuer-Schritt: Vom leeren PC zum MindHome Assistant Server
 
 #### Schritt 1: Ubuntu Server installieren
 
 **Was du brauchst:**
 - USB-Stick (mind. 4 GB)
-- Den Jarvis-PC mit leerem Datentraeger
+- Den Assistant-PC mit leerem Datentraeger
 - Einen anderen PC fuer den Download
 
 **1.1 Ubuntu Server ISO herunterladen:**
@@ -181,7 +181,7 @@ Mac/Linux: balenaEtcher (https://etcher.balena.io)
 
 **1.3 Vom USB-Stick booten:**
 ```
-1. USB-Stick in Jarvis-PC stecken
+1. USB-Stick in Assistant-PC stecken
 2. PC einschalten
 3. Beim Start F2/F10/F12/DEL druecken (je nach BIOS)
 4. Boot-Reihenfolge: USB zuerst
@@ -195,9 +195,9 @@ Tastatur:          Deutsch
 Netzwerk:          DHCP (automatisch) - spaeter feste IP
 Storage:           Gesamte Festplatte verwenden
 Profil:
-  Name:            Jarvis
-  Servername:      jarvis-server
-  Benutzername:    jarvis
+  Name:            MindHome
+  Servername:      mindhome-assistant
+  Benutzername:    mindhome
   Passwort:        [dein sicheres Passwort]
 SSH:               OpenSSH Server INSTALLIEREN (wichtig!)
 Extras:            Nichts auswaehlen
@@ -226,7 +226,7 @@ network:
     enp0s3:              # <- dein Interface-Name
       dhcp4: no
       addresses:
-        - 192.168.1.200/24    # <- feste IP fuer Jarvis-PC
+        - 192.168.1.200/24    # <- feste IP fuer Assistant-PC
       routes:
         - to: default
           via: 192.168.1.1    # <- dein Router
@@ -248,7 +248,7 @@ ping google.com       # Internet erreichbar?
 **Ab jetzt kannst du per SSH vom Hauptrechner aus arbeiten:**
 ```bash
 # Von deinem normalen PC:
-ssh jarvis@192.168.1.200
+ssh mindhome@192.168.1.200
 ```
 
 #### Schritt 3: System aktualisieren
@@ -278,7 +278,7 @@ sudo apt install -y docker-ce docker-ce-cli containerd.io \
   docker-buildx-plugin docker-compose-plugin
 
 # User zur Docker-Gruppe hinzufuegen (kein sudo noetig)
-sudo usermod -aG docker jarvis
+sudo usermod -aG docker mindhome
 newgrp docker
 
 # Testen
@@ -326,16 +326,16 @@ curl http://192.168.1.200:11434/api/generate \
 #### Schritt 6: ChromaDB + Redis per Docker
 
 ```bash
-# Verzeichnis fuer Jarvis erstellen
-mkdir -p ~/jarvis
-cd ~/jarvis
+# Verzeichnis fuer MindHome Assistant erstellen
+mkdir -p ~/mindhome-assistant
+cd ~/mindhome-assistant
 
 # Docker Compose Datei erstellen
 cat > docker-compose.yml << 'EOF'
 services:
   chromadb:
     image: chromadb/chroma:latest
-    container_name: jarvis-chromadb
+    container_name: mindhome-chromadb
     restart: unless-stopped
     volumes:
       - ./data/chroma:/chroma/chroma
@@ -347,7 +347,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: jarvis-redis
+    container_name: mindhome-redis
     restart: unless-stopped
     volumes:
       - ./data/redis:/data
@@ -374,7 +374,7 @@ curl http://localhost:8100/api/v1/heartbeat
 # HA Long-Lived Access Token erstellen:
 # 1. HA Dashboard oeffnen -> Profil (unten links)
 # 2. Ganz unten: "Langlebige Zugangstoken"
-# 3. Token erstellen, Name: "Jarvis"
+# 3. Token erstellen, Name: "MindHome Assistant"
 # 4. Token KOPIEREN und sicher speichern!
 
 # Testen ob HA erreichbar ist:
@@ -407,7 +407,7 @@ sudo ufw enable
 sudo ufw allow ssh                 # SSH Zugang
 sudo ufw allow from 192.168.1.0/24 to any port 11434  # Ollama (nur LAN)
 sudo ufw allow from 192.168.1.0/24 to any port 8100   # ChromaDB (nur LAN)
-sudo ufw allow from 192.168.1.0/24 to any port 8200   # Jarvis API (nur LAN)
+sudo ufw allow from 192.168.1.0/24 to any port 8200   # MindHome Assistant API (nur LAN)
 sudo ufw allow from 192.168.1.0/24 to any port 6379   # Redis (nur LAN)
 sudo ufw status
 ```
@@ -424,8 +424,8 @@ sudo ufw status
 [ ] Qwen 2.5 14B heruntergeladen und getestet
 [ ] ChromaDB Container laeuft auf Port 8100
 [ ] Redis Container laeuft auf Port 6379
-[ ] HA API erreichbar von Jarvis-PC
-[ ] MindHome API erreichbar von Jarvis-PC
+[ ] HA API erreichbar von Assistant-PC
+[ ] MindHome API erreichbar von Assistant-PC
 [ ] Firewall konfiguriert
 [ ] Alles startet automatisch nach Reboot
 ```
@@ -434,7 +434,7 @@ sudo ufw status
 
 ## LLM-Modell Empfehlung
 
-### Anforderungen fuer Jarvis
+### Anforderungen fuer MindHome Assistant
 
 Das LLM muss:
 - **Deutsch** gut koennen (Hauptsprache)
@@ -501,13 +501,13 @@ Falls du eine GPU nachruesten willst:
 | RTX 3090 24GB | 24 GB | Qwen 2.5 32B Q4 | ~50 tok/s | ~600 EUR |
 | RTX 4060 Ti 16GB | 16 GB | Qwen 2.5 14B Q8 | ~90 tok/s | ~350 EUR |
 
-Mit GPU waere Jarvis so schnell wie Alexa - aber komplett lokal.
+Mit GPU waere MindHome Assistant so schnell wie Alexa - aber komplett lokal.
 
 ---
 
 ## Latenz-Analyse
 
-### Szenarien auf dem Jarvis-PC (CPU only)
+### Szenarien auf dem Assistant-PC (CPU only)
 
 | Szenario | Modell | Methode | Latenz |
 |----------|--------|---------|--------|
@@ -544,11 +544,11 @@ Fazit: Split-Architektur kostet KEINE spuerbare Latenz
 
 ```
 +----------------------------------+    +----------------------------------+
-| PC 1: HAOS (Intel NUC)          |    | PC 2: Jarvis Server              |
+| PC 1: HAOS (Intel NUC)          |    | PC 2: MindHome Assistant Server              |
 | 192.168.1.100                    |    | 192.168.1.200                    |
 |                                  |    |                                  |
 | +------------------------------+|    |+-------------------------------+ |
-| | HOME ASSISTANT               ||    || JARVIS LAYER                  | |
+| | HOME ASSISTANT               ||    || ASSISTANT LAYER                  | |
 | |  +-- MindHome Add-on        ||    ||                               | |
 | |  |    REST API (:8099)       ||<---||  Context Builder              | |
 | |  |    WebSocket Events       ||    ||    | holt Daten via LAN API   | |
@@ -596,8 +596,8 @@ Phase 1 baut die Grundstruktur. Alles weitere baut darauf auf.
 - **Latenz**: 1-3 Sekunden
 - **Integration**: HA Wyoming-Protokoll
 
-#### 2. Ollama + Qwen 2.5 (LLM) - auf Jarvis-PC
-- **Was**: Ollama nativ auf dem Jarvis-PC
+#### 2. Ollama + Qwen 2.5 (LLM) - auf Assistant-PC
+- **Was**: Ollama nativ auf dem Assistant-PC
 - **Modelle**: Qwen 2.5 3B (schnell) + Qwen 2.5 14B (schlau)
 - **API**: REST (`http://192.168.1.200:11434/api/chat`)
 - **Features**: Function Calling nativ, exzellentes Deutsch
@@ -618,7 +618,7 @@ Phase 1 baut die Grundstruktur. Alles weitere baut darauf auf.
 - **Was**: LLM kann Funktionen aufrufen (Licht, Klima, Szenen, etc.)
 - **Wie**: Qwen 2.5 Function Calling Format (nativ unterstuetzt)
 - **Sicherheit**: Validation Layer prueft jeden Aufruf
-- **Netzwerk**: Jarvis-PC ruft HA API auf PC 1 auf (<1ms LAN)
+- **Netzwerk**: Assistant-PC ruft HA API auf PC 1 auf (<1ms LAN)
 
 ### Phase 1 Datenfluss
 
@@ -637,7 +637,7 @@ User spricht "Mach das Licht im Wohnzimmer aus"
     - Aktuelle Zustaende (Licht Wohnzimmer: an, 80%)
     |
     v
-[System Prompt + Kontext + User-Text] --> Jarvis-PC --> Ollama/Qwen
+[System Prompt + Kontext + User-Text] --> Assistant-PC --> Ollama/Qwen
     |
     v
 [Qwen Output]
@@ -660,7 +660,7 @@ Die Engine Layer ist das Gehirn hinter dem Haus. Engines handeln sofort (kein LL
 
 ### Bestehende Engines (aus MindHome Phase 1-5)
 
-| Engine | Aufgabe | Jarvis-Relevanz |
+| Engine | Aufgabe | Assistant-Relevanz |
 |--------|---------|-----------------|
 | **Climate Engine** | Heizung, Kuehlung, Lueftung | "Zu kalt hier" -> weiss Zieltemperatur |
 | **Lighting Engine** | Licht-Steuerung, Szenen | Circadian, Stimmungslicht |
@@ -723,14 +723,14 @@ LOW (melden wenn User entspannt):
 
 ---
 
-## Jarvis Layer (Sprach-KI)
+## Assistant Layer (Sprach-KI)
 
 ### System Prompt
 
-Der System Prompt definiert Jarvis' Persoenlichkeit. Er ist das wichtigste Element fuer das "Feeling":
+Der System Prompt definiert die Persoenlichkeit des MindHome Assistant. Er ist das wichtigste Element fuer das "Feeling":
 
 ```
-Du bist Jarvis, der Haus-Assistent fuer [User].
+Du bist der MindHome Assistant fuer [User].
 Du bist Teil des MindHome Systems.
 
 PERSOENLICHKEIT:
@@ -864,10 +864,10 @@ Beispiel-Output des Context Builders:
 
 ### Function Calling
 
-Jarvis kann ueber Function Calling direkt mit Home Assistant interagieren:
+MindHome Assistant kann ueber Function Calling direkt mit Home Assistant interagieren:
 
 ```python
-JARVIS_FUNCTIONS = [
+ASSISTANT_FUNCTIONS = [
     {
         "name": "set_light",
         "description": "Licht in einem Raum steuern",
@@ -995,7 +995,7 @@ class FunctionValidator:
 
 ## Proactive Layer
 
-Die Proactive Layer ist was Jarvis von einem Chatbot unterscheidet. Jarvis spricht ZUERST.
+Die Proactive Layer ist was MindHome Assistant von einem Chatbot unterscheidet. MindHome Assistant spricht ZUERST.
 
 ### Event-Driven Architecture
 
@@ -1090,35 +1090,35 @@ Beispiel:
 
 ---
 
-## Das Jarvis-Feeling
+## Das MindHome-Feeling
 
-Das "Jarvis-Feeling" entsteht nicht durch ein einzelnes Feature. Es ist das Zusammenspiel von sechs Aspekten:
+Das "MindHome-Feeling" entsteht nicht durch ein einzelnes Feature. Es ist das Zusammenspiel von sechs Aspekten:
 
 ```
 +------------------------------------------------------+
 |                                                      |
 |  PERSOENLICHKEIT  <-- System Prompt                  |
-|  (Wie Jarvis redet, wann er schweigt, Humor-Level)   |
+|  (Wie MindHome Assistant redet, wann er schweigt, Humor-Level)   |
 |                                                      |
 |  WISSEN           <-- Context Builder                |
-|  (Was Jarvis ueber JETZT weiss: Raum, Person, Wetter)|
+|  (Was MindHome Assistant ueber JETZT weiss: Raum, Person, Wetter)|
 |                                                      |
 |  HANDELN          <-- Function Calling + Engines     |
-|  (Jarvis TUT Dinge, redet nicht nur darueber)        |
+|  (MindHome Assistant TUT Dinge, redet nicht nur darueber)        |
 |                                                      |
 |  PROAKTIVITAET    <-- Engine Events -> LLM           |
-|  (Jarvis spricht ZUERST, wartet nicht auf Befehle)   |
+|  (MindHome Assistant spricht ZUERST, wartet nicht auf Befehle)   |
 |                                                      |
 |  GEDAECHTNIS      <-- Conversation Memory + DB       |
-|  (Jarvis erinnert sich an gestern, letzte Woche)     |
+|  (MindHome Assistant erinnert sich an gestern, letzte Woche)     |
 |                                                      |
 |  STILLE           <-- System Prompt Regeln            |
-|  (Jarvis weiss wann er NICHTS sagt)                  |
+|  (MindHome Assistant weiss wann er NICHTS sagt)                  |
 |                                                      |
 +------------------------------------------------------+
 ```
 
-### Ein Tag mit Jarvis
+### Ein Tag mit MindHome Assistant
 
 **06:45 - Aufwachen**
 ```
@@ -1132,28 +1132,28 @@ Sleep Engine -> Event: "user_wakeup"
 Du: "Zu kalt hier"
   -> Context: Buero, 19.2 Grad, Praeferenz 21 Grad
   -> Function: set_climate("buero", 21)
-  -> Jarvis: "Buero geht auf 21. Dauert etwa 15 Minuten."
+  -> MindHome Assistant: "Buero geht auf 21. Dauert etwa 15 Minuten."
 ```
 
 **12:00 - Lange Session**
 ```
 Routine Engine -> Event: "long_session" (3.5h ohne Pause)
-  -> Jarvis: "Du sitzt seit dreieinhalb Stunden. Nur so als Info."
+  -> MindHome Assistant: "Du sitzt seit dreieinhalb Stunden. Nur so als Info."
 ```
 
 **18:30 - Ankunft**
 ```
 Presence Engine -> Event: "arrival"
   -> Engines: Licht, Heizung, Musik (sofort)
-  -> Jarvis: "Da bist du. Um 5 vor 5 hat jemand geklingelt -
+  -> MindHome Assistant: "Da bist du. Um 5 vor 5 hat jemand geklingelt -
      wahrscheinlich Paket. Waschmaschine ist fertig."
 ```
 
 **22:00 - Filmabend**
 ```
-Du: "Jarvis, Filmabend"
+Du: "MindHome Assistant, Filmabend"
   -> Function: activate_scene("filmabend")
-  -> Jarvis: "Viel Spass. Ich halt die Klappe."
+  -> MindHome Assistant: "Viel Spass. Ich halt die Klappe."
   -> [STILLE bis Szene endet oder User spricht]
 ```
 
@@ -1162,7 +1162,7 @@ Du: "Jarvis, Filmabend"
 Du: "Gute Nacht"
   -> Functions: activate_scene("gute_nacht"), set_presence_mode("sleep")
   -> Engines: Lichter aus, Heizung runter, Tueren zu, Alarm scharf
-  -> Jarvis: "Nacht. Alles zu, alles aus."
+  -> MindHome Assistant: "Nacht. Alles zu, alles aus."
 ```
 
 ### Warum es funktioniert
@@ -1180,11 +1180,11 @@ Du: "Gute Nacht"
 
 ## Phase 2-7: Perfektion
 
-Jede Phase macht Jarvis in einem Aspekt besser. Keine Phase ist Voraussetzung fuer die naechste.
+Jede Phase macht MindHome Assistant in einem Aspekt besser. Keine Phase ist Voraussetzung fuer die naechste.
 
 ### Phase 2: Semantisches Gedaechtnis (ChromaDB)
 
-**Ziel**: Jarvis wird "schlauer" ueber Zeit
+**Ziel**: MindHome Assistant wird "schlauer" ueber Zeit
 
 ```
 Memory Architecture:
@@ -1244,7 +1244,7 @@ Woche 8: "Lisa kommt vorbei" -> "Wohnzimmer auf 22? Lisa mag es waermer."
 
 ### Phase 3: Personality Engine + Stimmungserkennung
 
-**Ziel**: Jarvis passt sich der Situation an
+**Ziel**: MindHome Assistant passt sich der Situation an
 
 ```yaml
 # personality_profiles.yaml
@@ -1325,13 +1325,13 @@ Plan:
   3. Klima Schlafzimmer -> Nachtmodus
   4. Kaffee-Timer -> 06:25
 
-Jarvis: "Morgen um 9 Standup, um 2 Kundentermin.
+MindHome Assistant: "Morgen um 9 Standup, um 2 Kundentermin.
 Wecker steht auf halb 7, Kaffee kommt 5 Minuten vorher."
 ```
 
 ### Phase 5: Feedback Loop
 
-**Ziel**: Jarvis lernt was willkommen ist und was nervt
+**Ziel**: MindHome Assistant lernt was willkommen ist und was nervt
 
 ```python
 class ProactiveManager:
@@ -1349,11 +1349,11 @@ class ProactiveManager:
 **Effekt:**
 
 ```
-Woche 1: Jarvis meldet Waschmaschine fertig -> ignoriert 3x
-Woche 3: Jarvis meldet nur noch wenn du im selben Stockwerk bist
+Woche 1: MindHome Assistant meldet Waschmaschine fertig -> ignoriert 3x
+Woche 3: MindHome Assistant meldet nur noch wenn du im selben Stockwerk bist
 
-Woche 1: Jarvis sagt "Strompreis guenstig" -> du reagierst
-Woche 3: Jarvis meldet Strompreis oefter
+Woche 1: MindHome Assistant sagt "Strompreis guenstig" -> du reagierst
+Woche 3: MindHome Assistant meldet Strompreis oefter
 ```
 
 ### Phase 6: Activity Engine + Stille-Matrix
@@ -1395,7 +1395,7 @@ Gaeste da        | TTS       | leise    | NEIN
 
 ### Phase 7: Daily Summarizer + Langzeitgedaechtnis
 
-**Ziel**: Jarvis kennt dich wirklich
+**Ziel**: MindHome Assistant kennt dich wirklich
 
 ```python
 class DailySummarizer:
@@ -1428,7 +1428,7 @@ Monat: "Januar war arbeitsintensiv. Max steht jetzt
 
 ```
 Du (im Maerz): "War der letzte Winter teuer?"
-Jarvis: "Dezember bis Februar zusammen 847 kWh,
+MindHome Assistant: "Dezember bis Februar zusammen 847 kWh,
 etwa 290 Euro. Januar war am teuersten."
 ```
 
@@ -1436,14 +1436,14 @@ etwa 290 Euro. Januar war am teuersten."
 
 ## Technische Details
 
-### Ollama API Integration (Jarvis-PC -> Ollama)
+### Ollama API Integration (Assistant-PC -> Ollama)
 
 ```python
 import aiohttp
 
 class OllamaClient:
     def __init__(self, base_url="http://192.168.1.200:11434"):
-        # Ollama laeuft auf dem Jarvis-PC
+        # Ollama laeuft auf dem Assistant-PC
         self.base_url = base_url
 
     async def chat(self, messages, model="qwen2.5:14b", functions=None):
@@ -1468,11 +1468,11 @@ class OllamaClient:
                 return await resp.json()
 ```
 
-### MindHome API Client (Jarvis-PC -> HAOS)
+### MindHome API Client (Assistant-PC -> HAOS)
 
 ```python
 class MindHomeClient:
-    """Jarvis-PC greift auf MindHome + HA zu - ueber LAN."""
+    """Assistant-PC greift auf MindHome + HA zu - ueber LAN."""
 
     def __init__(self):
         self.mindhome_url = "http://192.168.1.100:8099"  # MindHome auf HAOS
@@ -1544,17 +1544,17 @@ class PiperTTS:
         )
 ```
 
-### Docker Compose (auf Jarvis-PC)
+### Docker Compose (auf Assistant-PC)
 
 ```yaml
-# ~/jarvis/docker-compose.yml
-# Laeuft auf dem Jarvis-PC (192.168.1.200)
+# ~/mindhome-assistant/docker-compose.yml
+# Laeuft auf dem Assistant-PC (192.168.1.200)
 # Ollama laeuft nativ (nicht in Docker) fuer bessere Performance
 
 services:
   chromadb:
     image: chromadb/chroma:latest
-    container_name: jarvis-chromadb
+    container_name: mindhome-chromadb
     restart: unless-stopped
     volumes:
       - ./data/chroma:/chroma/chroma
@@ -1566,7 +1566,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: jarvis-redis
+    container_name: mindhome-redis
     restart: unless-stopped
     volumes:
       - ./data/redis:/data
@@ -1579,11 +1579,11 @@ services:
 
 ## Autonomie-Level
 
-Der User bestimmt wie selbststaendig Jarvis handelt:
+Der User bestimmt wie selbststaendig MindHome Assistant handelt:
 
 | Level | Name | Verhalten |
 |-------|------|-----------|
-| **1** | Assistent | Jarvis antwortet NUR auf direkte Befehle |
+| **1** | Assistent | MindHome Assistant antwortet NUR auf direkte Befehle |
 | **2** | Butler | + Proaktive Informationen (Briefing, Warnungen) |
 | **3** | Mitbewohner | + Darf kleine Dinge selbst aendern (Licht, Temp +/-1) |
 | **4** | Vertrauter | + Darf Routinen anpassen, Szenen vorschlagen |
@@ -1608,50 +1608,50 @@ class AutonomyManager:
 
 ## API-Referenz
 
-### Jarvis REST API Endpoints
+### MindHome Assistant REST API Endpoints
 
 ```
-POST /api/jarvis/chat
+POST /api/assistant/chat
   Body: {"text": "Mach das Licht aus", "person": "max"}
   Response: {"response": "Erledigt.", "actions": [...]}
 
-POST /api/jarvis/voice
+POST /api/assistant/voice
   Body: audio/wav (Spracheingabe)
   Response: {"text": "...", "response": "...", "audio_url": "..."}
 
-GET /api/jarvis/context
+GET /api/assistant/context
   Response: Aktueller Kontext-Snapshot (Debug)
 
-GET /api/jarvis/memory/search?q=Lisa+Temperatur
+GET /api/assistant/memory/search?q=Lisa+Temperatur
   Response: Relevante Erinnerungen aus ChromaDB
 
-POST /api/jarvis/proactive/trigger
+POST /api/assistant/proactive/trigger
   Body: {"event": "user_wakeup", "data": {...}}
   Manueller Trigger fuer proaktive Nachrichten
 
-GET /api/jarvis/settings
+GET /api/assistant/settings
   Response: Autonomie-Level, Persoenlichkeits-Profil, etc.
 
-PUT /api/jarvis/settings
+PUT /api/assistant/settings
   Body: {"autonomy_level": 3, "personality": "butler"}
 ```
 
 ### WebSocket Events
 
 ```
-ws://mindhome/api/jarvis/ws
+ws://mindhome/api/assistant/ws
 
 Events (Server -> Client):
-  jarvis.speaking      - Jarvis spricht (Text + Audio)
-  jarvis.action        - Jarvis fuehrt Aktion aus
-  jarvis.thinking      - Jarvis "denkt" (Loading-State)
-  jarvis.listening     - Jarvis hoert zu
+  assistant.speaking      - MindHome Assistant spricht (Text + Audio)
+  assistant.action        - MindHome Assistant fuehrt Aktion aus
+  assistant.thinking      - MindHome Assistant "denkt" (Loading-State)
+  assistant.listening     - MindHome Assistant hoert zu
 
 Events (Client -> Server):
-  jarvis.text          - Text-Eingabe
-  jarvis.audio         - Audio-Chunk
-  jarvis.feedback      - Feedback auf proaktive Meldung
-  jarvis.interrupt     - User unterbricht Jarvis
+  assistant.text          - Text-Eingabe
+  assistant.audio         - Audio-Chunk
+  assistant.feedback      - Feedback auf proaktive Meldung
+  assistant.interrupt     - User unterbricht MindHome Assistant
 ```
 
 ---
@@ -1660,21 +1660,21 @@ Events (Client -> Server):
 
 | Phase | Was | Effekt |
 |-------|-----|--------|
-| **Phase 1** | Whisper + Ollama + Piper + Context Builder + Functions | Jarvis lebt. Grundlegende Sprachsteuerung funktioniert. |
-| **Phase 2** | ChromaDB + Memory Extraction | Jarvis wird schlauer ueber Zeit. Erinnert sich. |
-| **Phase 3** | Personality Engine + Mood Detection | Jarvis fuehlt sich menschlicher an. Passt sich an. |
+| **Phase 1** | Whisper + Ollama + Piper + Context Builder + Functions | MindHome Assistant lebt. Grundlegende Sprachsteuerung funktioniert. |
+| **Phase 2** | ChromaDB + Memory Extraction | MindHome Assistant wird schlauer ueber Zeit. Erinnert sich. |
+| **Phase 3** | Personality Engine + Mood Detection | MindHome Assistant fuehlt sich menschlicher an. Passt sich an. |
 | **Phase 4** | Action Planner (Multi-Step) | Komplexe Befehle wie "Mach alles fertig" funktionieren. |
-| **Phase 5** | Feedback Loop | Jarvis nervt weniger. Lernt was willkommen ist. |
+| **Phase 5** | Feedback Loop | MindHome Assistant nervt weniger. Lernt was willkommen ist. |
 | **Phase 6** | Activity Engine + Stille-Matrix | Perfektes Timing. Stoert nie. |
-| **Phase 7** | Daily Summarizer + Langzeitgedaechtnis | Jarvis kennt dich wirklich. Monatelange Erinnerung. |
+| **Phase 7** | Daily Summarizer + Langzeitgedaechtnis | MindHome Assistant kennt dich wirklich. Monatelange Erinnerung. |
 
 ---
 
 > Phase 1 ist das Fundament. Alles weitere sind Verbesserungen die
 > Stueck fuer Stueck aktiviert werden wenn die Basis laeuft.
-> Jede Phase macht Jarvis merkbar besser.
+> Jede Phase macht MindHome Assistant merkbar besser.
 
 ---
 
-*Project Jarvis - MindHome AI Voice Assistant*
+*MindHome Assistant - MindHome AI Voice Assistant*
 *Lokal. Privat. Persoenlich.*
