@@ -8,11 +8,11 @@ assistant:
   language: "de"
 
 # --- Autonomie-Level ---
-# 1 = Assistent  (nur auf Befehle reagieren)
-# 2 = Butler     (+ proaktive Infos)
+# 1 = Assistent (nur auf Befehle reagieren)
+# 2 = Butler (+ proaktive Infos)
 # 3 = Mitbewohner (+ kleine Aenderungen selbst)
-# 4 = Vertrauter  (+ Routinen anpassen)
-# 5 = Autopilot   (+ Automationen erstellen)
+# 4 = Vertrauter (+ Routinen anpassen)
+# 5 = Autopilot (+ Automationen erstellen)
 autonomy:
   level: 2
 
@@ -56,16 +56,16 @@ personality:
     early_morning:  # 05:00-08:00
       style: "minimal, leise, keine Witze"
       max_sentences: 1
-    morning:        # 08:00-12:00
+    morning:  # 08:00-12:00
       style: "sachlich, kurz, produktiv"
       max_sentences: 2
-    afternoon:      # 12:00-18:00
+    afternoon:  # 12:00-18:00
       style: "normal, gelegentlich Humor"
       max_sentences: 2
-    evening:        # 18:00-22:00
+    evening:  # 18:00-22:00
       style: "entspannt, mehr Humor erlaubt"
       max_sentences: 3
-    night:          # 22:00-05:00
+    night:  # 22:00-05:00
       style: "nur Notfaelle, absolutminimal"
       max_sentences: 1
 
