@@ -18,6 +18,8 @@ from .memory import MemoryManager
 from .model_router import ModelRouter
 from .ollama_client import OllamaClient
 from .personality import PersonalityEngine
+from .proactive import ProactiveManager
+from .websocket import emit_thinking, emit_speaking, emit_action
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +40,12 @@ class AssistantBrain:
         self.validator = FunctionValidator()
         self.memory = MemoryManager()
         self.autonomy = AutonomyManager()
+        self.proactive = ProactiveManager(self)
 
     async def initialize(self):
         """Initialisiert alle Komponenten."""
         await self.memory.initialize()
+        await self.proactive.start()
         logger.info("MindHome Assistant Brain initialisiert")
 
     async def process(self, text: str, person: Optional[str] = None) -> dict:
@@ -56,6 +60,9 @@ class AssistantBrain:
             Dict mit response, actions, model_used
         """
         logger.info("Input: '%s' (Person: %s)", text, person or "unbekannt")
+
+        # WebSocket: Denk-Status senden
+        await emit_thinking()
 
         # 1. Kontext sammeln
         context = await self.context_builder.build(trigger="voice")
@@ -134,6 +141,9 @@ class AssistantBrain:
                     "result": result,
                 })
 
+                # WebSocket: Aktion melden
+                await emit_action(func_name, func_args, result)
+
             # Wenn Aktionen, aber keine Text-Antwort: Standard-Bestaetigung
             if executed_actions and not response_text:
                 if all(a["result"].get("success", False) for a in executed_actions if isinstance(a["result"], dict)):
@@ -165,6 +175,9 @@ class AssistantBrain:
             "model_used": model,
             "context_room": context.get("room", "unbekannt"),
         }
+        # WebSocket: Antwort senden
+        await emit_speaking(response_text)
+
         logger.info("Output: '%s' (Aktionen: %d)", response_text, len(executed_actions))
         return result
 
@@ -182,6 +195,7 @@ class AssistantBrain:
                 "home_assistant": "connected" if ha_ok else "disconnected",
                 "redis": "connected" if self.memory.redis else "disconnected",
                 "chromadb": "connected" if self.memory.chroma_collection else "disconnected",
+                "proactive": "running" if self.proactive._running else "stopped",
             },
             "models_available": models,
             "autonomy": self.autonomy.get_level_info(),
@@ -189,5 +203,6 @@ class AssistantBrain:
 
     async def shutdown(self):
         """Faehrt MindHome Assistant herunter."""
+        await self.proactive.stop()
         await self.memory.close()
         logger.info("MindHome Assistant heruntergefahren")

@@ -3,15 +3,17 @@ MindHome Assistant - Hauptanwendung (FastAPI Server)
 Startet den MindHome Assistant REST API Server.
 """
 
+import json
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 from typing import Optional
 
 from .brain import AssistantBrain
 from .config import settings
+from .websocket import ws_manager, emit_speaking
 
 # Logging
 logging.basicConfig(
@@ -138,6 +140,62 @@ async def update_settings(update: SettingsUpdate):
             raise HTTPException(status_code=400, detail="Level muss 1-5 sein")
         result["autonomy"] = brain.autonomy.get_level_info()
     return result
+
+
+@app.websocket("/api/assistant/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket fuer Echtzeit-Events.
+
+    Events (Server -> Client):
+        assistant.speaking  - Assistent spricht (Text)
+        assistant.thinking  - Assistent denkt nach
+        assistant.action    - Assistent fuehrt Aktion aus
+        assistant.listening - Assistent hoert zu
+        assistant.proactive - Proaktive Meldung
+
+    Events (Client -> Server):
+        assistant.text     - Text-Eingabe
+        assistant.feedback - Feedback auf Meldung
+        assistant.interrupt - Unterbrechung
+    """
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            try:
+                message = json.loads(data)
+                event = message.get("event", "")
+
+                if event == "assistant.text":
+                    text = message.get("data", {}).get("text", "")
+                    person = message.get("data", {}).get("person")
+                    if text:
+                        result = await brain.process(text, person)
+                        await emit_speaking(result["response"])
+
+                elif event == "assistant.feedback":
+                    event_type = message.get("data", {}).get("event_type", "")
+                    response = message.get("data", {}).get("response", "ignored")
+                    delta_map = {
+                        "ignored": -0.05,
+                        "dismissed": -0.10,
+                        "engaged": 0.10,
+                        "thanked": 0.20,
+                    }
+                    delta = delta_map.get(response, 0)
+                    if event_type and delta:
+                        await brain.memory.update_feedback_score(event_type, delta)
+
+                elif event == "assistant.interrupt":
+                    pass  # Fuer spaetere Streaming-Unterbrechung
+
+            except json.JSONDecodeError:
+                await ws_manager.send_personal(
+                    websocket, "error", {"message": "Ungültiges JSON"}
+                )
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
 
 
 @app.get("/")
