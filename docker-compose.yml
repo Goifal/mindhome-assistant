@@ -4,10 +4,10 @@
 # Ollama laeuft NATIV (nicht in Docker) fuer bessere Performance
 # ============================================================
 #
-# Starten:   docker compose up -d
-# Stoppen:   docker compose down
-# Logs:      docker compose logs -f assistant
-# Status:    docker compose ps
+# Starten: docker compose up -d
+# Stoppen: docker compose down
+# Logs: docker compose logs -f assistant
+# Status: docker compose ps
 #
 
 services:
