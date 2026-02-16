@@ -187,6 +187,41 @@ ASSISTANT_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_entity_state",
+            "description": "Status einer Home Assistant Entity abfragen (z.B. Sensor, Schalter, Thermostat)",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "entity_id": {
+                        "type": "string",
+                        "description": "Entity-ID (z.B. sensor.temperatur_buero, switch.steckdose_kueche)",
+                    },
+                },
+                "required": ["entity_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_presence_mode",
+            "description": "Anwesenheitsmodus des Hauses setzen",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["home", "away", "sleep", "vacation"],
+                        "description": "Anwesenheitsmodus",
+                    },
+                },
+                "required": ["mode"],
+            },
+        },
+    },
 ]
 
 
@@ -353,6 +388,57 @@ class FunctionExecutor:
                 "persistent_notification", "create", {"message": message}
             )
         return {"success": success, "message": f"Benachrichtigung gesendet"}
+
+    async def _exec_get_entity_state(self, args: dict) -> dict:
+        entity_id = args["entity_id"]
+        state = await self.ha.get_state(entity_id)
+        if not state:
+            return {"success": False, "message": f"Entity '{entity_id}' nicht gefunden"}
+
+        current = state.get("state", "unknown")
+        attrs = state.get("attributes", {})
+        friendly_name = attrs.get("friendly_name", entity_id)
+        unit = attrs.get("unit_of_measurement", "")
+
+        display = f"{friendly_name}: {current}"
+        if unit:
+            display += f" {unit}"
+
+        return {"success": True, "message": display, "state": current, "attributes": attrs}
+
+    async def _exec_set_presence_mode(self, args: dict) -> dict:
+        mode = args["mode"]
+
+        # Versuche input_select fuer Anwesenheitsmodus zu finden
+        states = await self.ha.get_states()
+        entity_id = None
+        for s in (states or []):
+            eid = s.get("entity_id", "")
+            if eid.startswith("input_select.") and any(
+                kw in eid for kw in ("presence", "anwesenheit", "presence_mode")
+            ):
+                entity_id = eid
+                break
+
+        if entity_id:
+            success = await self.ha.call_service(
+                "input_select", "select_option",
+                {"entity_id": entity_id, "option": mode},
+            )
+            return {"success": success, "message": f"Anwesenheit: {mode}"}
+
+        # Fallback: HA Event feuern, damit Automationen reagieren koennen
+        success = await self.ha.call_service(
+            "event", "fire",
+            {"event_type": "mindhome_presence_mode", "event_data": {"mode": mode}},
+        )
+        if not success:
+            # Letzter Fallback: Direkter Service-Call
+            success = await self.ha.call_service(
+                "input_boolean", "turn_on" if mode == "home" else "turn_off",
+                {"entity_id": "input_boolean.zu_hause"},
+            )
+        return {"success": success, "message": f"Anwesenheit: {mode}"}
 
     async def _find_entity(self, domain: str, search: str) -> Optional[str]:
         """Findet eine Entity anhand von Domain und Suchbegriff."""
