@@ -53,6 +53,27 @@ class MemoryManager:
             logger.warning("ChromaDB nicht verfuegbar: %s", e)
             self.chroma_collection = None
 
+    # ----- Health Checks -----
+
+    async def check_redis_health(self) -> bool:
+        """Prueft ob Redis erreichbar ist."""
+        if not self.redis:
+            return False
+        try:
+            return await self.redis.ping()
+        except Exception:
+            return False
+
+    def check_chroma_health(self) -> bool:
+        """Prueft ob ChromaDB erreichbar ist."""
+        if not self._chroma_client:
+            return False
+        try:
+            self._chroma_client.heartbeat()
+            return True
+        except Exception:
+            return False
+
     # ----- Working Memory (Redis) -----
 
     async def add_conversation(self, role: str, content: str):

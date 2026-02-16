@@ -1,5 +1,6 @@
 """
-Home Assistant API Client - Kommunikation mit HA und MindHome
+Home Assistant API Client - Kommunikation mit HA und MindHome.
+Mit Retry-Logik, Circuit Breaker und differenziertem Error Handling.
 
 FIX: API-Endpoints an die tatsaechlichen MindHome Add-on Routes angepasst:
   /api/system/health  -> /api/health
@@ -16,8 +17,17 @@ from typing import Any, Optional
 import aiohttp
 
 from .config import settings
+from .resilience import CircuitBreaker, retry_async
 
 logger = logging.getLogger(__name__)
+
+
+class HAClientError(Exception):
+    """Fehler bei HA-Kommunikation mit Status-Info."""
+
+    def __init__(self, message: str, status_code: int = 0):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class HomeAssistantClient:
@@ -31,6 +41,8 @@ class HomeAssistantClient:
             "Authorization": f"Bearer {self.ha_token}",
             "Content-Type": "application/json",
         }
+        self._cb_ha = CircuitBreaker(name="home_assistant", failure_threshold=5, recovery_timeout=30.0)
+        self._cb_mindhome = CircuitBreaker(name="mindhome", failure_threshold=5, recovery_timeout=60.0)
 
     # ----- Home Assistant API -----
 
@@ -45,17 +57,7 @@ class HomeAssistantClient:
     async def call_service(
         self, domain: str, service: str, data: Optional[dict] = None
     ) -> bool:
-        """
-        HA Service aufrufen (z.B. light.turn_off).
-
-        Args:
-            domain: z.B. "light", "climate", "scene"
-            service: z.B. "turn_on", "turn_off", "activate"
-            data: Service-Daten (entity_id, brightness, etc.)
-
-        Returns:
-            True bei Erfolg
-        """
+        """HA Service aufrufen (z.B. light.turn_off)."""
         result = await self._post_ha(
             f"/api/services/{domain}/{service}", data or {}
         )
@@ -72,41 +74,33 @@ class HomeAssistantClient:
     # ----- MindHome API -----
 
     async def get_mindhome_status(self) -> Optional[dict]:
-        """MindHome System-Status."""
         return await self._get_mindhome("/api/health")
 
     async def get_presence(self) -> Optional[dict]:
-        """Anwesenheitsdaten von MindHome."""
         return await self._get_mindhome("/api/persons")
 
     async def get_energy(self) -> Optional[dict]:
-        """Energie-Daten von MindHome."""
         return await self._get_mindhome("/api/energy/summary")
 
     async def get_comfort(self) -> Optional[dict]:
-        """Komfort-Daten von MindHome."""
         return await self._get_mindhome("/api/health/comfort")
 
     async def get_security(self) -> Optional[dict]:
-        """Sicherheits-Status von MindHome."""
         return await self._get_mindhome("/api/security/dashboard")
 
     async def get_patterns(self) -> Optional[dict]:
-        """Erkannte Muster von MindHome."""
         return await self._get_mindhome("/api/patterns")
 
     async def get_health_dashboard(self) -> Optional[dict]:
-        """Gesundheits-Dashboard von MindHome."""
         return await self._get_mindhome("/api/health/dashboard")
 
     async def get_day_phases(self) -> Optional[dict]:
-        """Tagesphasen von MindHome."""
         return await self._get_mindhome("/api/day-phases")
 
-    # ----- Interne HTTP Methoden -----
+    # ----- Interne HTTP Methoden mit Retry + Circuit Breaker -----
 
     async def _get_ha(self, path: str) -> Any:
-        try:
+        async def _do_request():
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{self.ha_url}{path}",
@@ -115,14 +109,35 @@ class HomeAssistantClient:
                 ) as resp:
                     if resp.status == 200:
                         return await resp.json()
+                    if resp.status == 401:
+                        logger.error("HA Auth fehlgeschlagen (401) - Token pruefen!")
+                        return None
+                    if resp.status == 404:
+                        logger.debug("HA GET %s -> 404 (nicht gefunden)", path)
+                        return None
+                    if resp.status >= 500:
+                        raise HAClientError(f"HA Server-Fehler {resp.status}", resp.status)
                     logger.warning("HA GET %s -> %d", path, resp.status)
                     return None
-        except aiohttp.ClientError as e:
-            logger.error("HA nicht erreichbar: %s", e)
+
+        try:
+            return await retry_async(
+                _do_request,
+                max_retries=3,
+                base_delay=1.0,
+                max_delay=5.0,
+                exceptions=(aiohttp.ClientError, HAClientError, TimeoutError),
+                circuit_breaker=self._cb_ha,
+            )
+        except ConnectionError:
+            logger.error("HA nicht erreichbar (Circuit Breaker offen)")
+            return None
+        except Exception as e:
+            logger.error("HA GET %s Fehler: %s", path, e)
             return None
 
     async def _post_ha(self, path: str, data: dict) -> Any:
-        try:
+        async def _do_request():
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"{self.ha_url}{path}",
@@ -132,14 +147,35 @@ class HomeAssistantClient:
                 ) as resp:
                     if resp.status in (200, 201):
                         return await resp.json()
+                    if resp.status == 401:
+                        logger.error("HA Auth fehlgeschlagen (401)")
+                        return None
+                    if resp.status == 404:
+                        logger.warning("HA POST %s -> 404 (Service/Entity nicht gefunden)", path)
+                        return None
+                    if resp.status >= 500:
+                        raise HAClientError(f"HA Server-Fehler {resp.status}", resp.status)
                     logger.warning("HA POST %s -> %d", path, resp.status)
                     return None
-        except aiohttp.ClientError as e:
-            logger.error("HA nicht erreichbar: %s", e)
+
+        try:
+            return await retry_async(
+                _do_request,
+                max_retries=2,
+                base_delay=0.5,
+                max_delay=3.0,
+                exceptions=(aiohttp.ClientError, HAClientError, TimeoutError),
+                circuit_breaker=self._cb_ha,
+            )
+        except ConnectionError:
+            logger.error("HA nicht erreichbar (Circuit Breaker offen)")
+            return None
+        except Exception as e:
+            logger.error("HA POST %s Fehler: %s", path, e)
             return None
 
     async def _get_mindhome(self, path: str) -> Any:
-        try:
+        async def _do_request():
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{self.mindhome_url}{path}",
@@ -147,6 +183,18 @@ class HomeAssistantClient:
                 ) as resp:
                     if resp.status == 200:
                         return await resp.json()
+                    if resp.status >= 500:
+                        raise HAClientError(f"MindHome Server-Fehler {resp.status}", resp.status)
                     return None
-        except aiohttp.ClientError:
+
+        try:
+            return await retry_async(
+                _do_request,
+                max_retries=2,
+                base_delay=1.0,
+                max_delay=5.0,
+                exceptions=(aiohttp.ClientError, HAClientError, TimeoutError),
+                circuit_breaker=self._cb_mindhome,
+            )
+        except Exception:
             return None

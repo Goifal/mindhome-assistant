@@ -4,14 +4,60 @@ MindHome Assistant ruft ueber diese Funktionen Home Assistant Aktionen aus.
 """
 
 import logging
-from typing import Any, Optional
+import time
+import unicodedata
+from typing import Optional
 
 from .ha_client import HomeAssistantClient
 
 logger = logging.getLogger(__name__)
 
 
-# Ollama Tool-Definitionen (Qwen 2.5 Function Calling Format)
+# ----- Umlaut-Normalisierung -----
+
+_UMLAUT_MAP = str.maketrans({
+    "\u00e4": "ae", "\u00f6": "oe", "\u00fc": "ue", "\u00df": "ss",
+    "\u00c4": "Ae", "\u00d6": "Oe", "\u00dc": "Ue",
+})
+
+
+def normalize_for_search(text: str) -> str:
+    """Normalisiert Text fuer Entity-Suche (Umlaute, Spaces, Unicode)."""
+    normalized = text.translate(_UMLAUT_MAP)
+    normalized = normalized.lower().replace(" ", "_")
+    normalized = unicodedata.normalize("NFKD", normalized)
+    normalized = normalized.encode("ascii", "ignore").decode("ascii")
+    return normalized
+
+
+# ----- Entity Cache -----
+
+class EntityCache:
+    """TTL-Cache fuer HA Entity States."""
+
+    def __init__(self, ttl: int = 30):
+        self._cache: list[dict] = []
+        self._timestamp: float = 0
+        self._ttl = ttl
+
+    @property
+    def is_valid(self) -> bool:
+        return bool(self._cache) and (time.monotonic() - self._timestamp) < self._ttl
+
+    def get(self) -> list[dict]:
+        return self._cache if self.is_valid else []
+
+    def set(self, states: list[dict]):
+        self._cache = states
+        self._timestamp = time.monotonic()
+
+    def invalidate(self):
+        self._cache = []
+        self._timestamp = 0
+
+
+# ----- Ollama Tool-Definitionen (Qwen 2.5 Function Calling Format) -----
+
 ASSISTANT_TOOLS = [
     {
         "type": "function",
@@ -230,19 +276,10 @@ class FunctionExecutor:
 
     def __init__(self, ha_client: HomeAssistantClient):
         self.ha = ha_client
-        self._entity_cache: dict[str, list[dict]] = {}
+        self._cache = EntityCache(ttl=30)
 
     async def execute(self, function_name: str, arguments: dict) -> dict:
-        """
-        Fuehrt eine Funktion aus.
-
-        Args:
-            function_name: Name der Funktion
-            arguments: Parameter als Dict
-
-        Returns:
-            Ergebnis-Dict mit success und message
-        """
+        """Fuehrt eine Funktion aus."""
         handler = getattr(self, f"_exec_{function_name}", None)
         if not handler:
             return {"success": False, "message": f"Unbekannte Funktion: {function_name}"}
@@ -252,6 +289,19 @@ class FunctionExecutor:
         except Exception as e:
             logger.error("Fehler bei %s: %s", function_name, e)
             return {"success": False, "message": f"Fehler: {e}"}
+
+    async def _get_cached_states(self) -> list[dict]:
+        """Holt States aus Cache oder von HA."""
+        cached = self._cache.get()
+        if cached:
+            return cached
+        states = await self.ha.get_states()
+        if states:
+            self._cache.set(states)
+        return states or []
+
+    def invalidate_cache(self):
+        self._cache.invalidate()
 
     async def _exec_set_light(self, args: dict) -> dict:
         room = args["room"]
@@ -266,6 +316,8 @@ class FunctionExecutor:
 
         service = "turn_on" if state == "on" else "turn_off"
         success = await self.ha.call_service("light", service, service_data)
+        if success:
+            self.invalidate_cache()
         return {"success": success, "message": f"Licht {room} {state}"}
 
     async def _exec_set_climate(self, args: dict) -> dict:
@@ -280,18 +332,21 @@ class FunctionExecutor:
             service_data["hvac_mode"] = args["mode"]
 
         success = await self.ha.call_service("climate", "set_temperature", service_data)
-        return {"success": success, "message": f"{room} auf {temp}°C"}
+        if success:
+            self.invalidate_cache()
+        return {"success": success, "message": f"{room} auf {temp}\u00b0C"}
 
     async def _exec_activate_scene(self, args: dict) -> dict:
         scene = args["scene"]
         entity_id = await self._find_entity("scene", scene)
         if not entity_id:
-            # Versuche direkt mit scene.name
             entity_id = f"scene.{scene}"
 
         success = await self.ha.call_service(
             "scene", "turn_on", {"entity_id": entity_id}
         )
+        if success:
+            self.invalidate_cache()
         return {"success": success, "message": f"Szene '{scene}' aktiviert"}
 
     async def _exec_set_cover(self, args: dict) -> dict:
@@ -313,9 +368,8 @@ class FunctionExecutor:
         entity_id = await self._find_entity("media_player", room) if room else None
 
         if not entity_id:
-            # Ersten aktiven Player nehmen
-            states = await self.ha.get_states()
-            for s in (states or []):
+            states = await self._get_cached_states()
+            for s in states:
                 if s.get("entity_id", "").startswith("media_player."):
                     entity_id = s["entity_id"]
                     break
@@ -338,9 +392,9 @@ class FunctionExecutor:
 
     async def _exec_set_alarm(self, args: dict) -> dict:
         mode = args["mode"]
-        states = await self.ha.get_states()
+        states = await self._get_cached_states()
         entity_id = None
-        for s in (states or []):
+        for s in states:
             if s.get("entity_id", "").startswith("alarm_control_panel."):
                 entity_id = s["entity_id"]
                 break
@@ -357,6 +411,8 @@ class FunctionExecutor:
         success = await self.ha.call_service(
             "alarm_control_panel", service, {"entity_id": entity_id}
         )
+        if success:
+            self.invalidate_cache()
         return {"success": success, "message": f"Alarm: {mode}"}
 
     async def _exec_lock_door(self, args: dict) -> dict:
@@ -369,6 +425,8 @@ class FunctionExecutor:
         success = await self.ha.call_service(
             "lock", action, {"entity_id": entity_id}
         )
+        if success:
+            self.invalidate_cache()
         return {"success": success, "message": f"Tuer {door}: {action}"}
 
     async def _exec_send_notification(self, args: dict) -> dict:
@@ -409,10 +467,9 @@ class FunctionExecutor:
     async def _exec_set_presence_mode(self, args: dict) -> dict:
         mode = args["mode"]
 
-        # Versuche input_select fuer Anwesenheitsmodus zu finden
-        states = await self.ha.get_states()
+        states = await self._get_cached_states()
         entity_id = None
-        for s in (states or []):
+        for s in states:
             eid = s.get("entity_id", "")
             if eid.startswith("input_select.") and any(
                 kw in eid for kw in ("presence", "anwesenheit", "presence_mode")
@@ -427,13 +484,11 @@ class FunctionExecutor:
             )
             return {"success": success, "message": f"Anwesenheit: {mode}"}
 
-        # Fallback: HA Event feuern, damit Automationen reagieren koennen
         success = await self.ha.call_service(
             "event", "fire",
             {"event_type": "mindhome_presence_mode", "event_data": {"mode": mode}},
         )
         if not success:
-            # Letzter Fallback: Direkter Service-Call
             success = await self.ha.call_service(
                 "input_boolean", "turn_on" if mode == "home" else "turn_off",
                 {"entity_id": "input_boolean.zu_hause"},
@@ -445,25 +500,25 @@ class FunctionExecutor:
         if not search:
             return None
 
-        states = await self.ha.get_states()
+        states = await self._get_cached_states()
         if not states:
             return None
 
-        search_lower = search.lower().replace(" ", "_").replace("ue", "u").replace("ae", "a").replace("oe", "o")
+        search_norm = normalize_for_search(search)
 
         for state in states:
             entity_id = state.get("entity_id", "")
             if not entity_id.startswith(f"{domain}."):
                 continue
 
-            # Exakter Match
+            # Match gegen entity_id
             name = entity_id.split(".", 1)[1]
-            if search_lower in name:
+            if search_norm in name:
                 return entity_id
 
-            # Friendly name Match
-            friendly = state.get("attributes", {}).get("friendly_name", "").lower()
-            if search.lower() in friendly:
+            # Match gegen friendly_name (auch normalisiert)
+            friendly = state.get("attributes", {}).get("friendly_name", "")
+            if friendly and search_norm in normalize_for_search(friendly):
                 return entity_id
 
         return None

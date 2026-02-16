@@ -8,3 +8,7 @@ chromadb==0.5.23
 pyyaml==6.0.2
 python-dotenv==1.0.1
 httpx==0.28.1
+
+# Test-Dependencies
+pytest>=8.0
+pytest-asyncio>=0.23

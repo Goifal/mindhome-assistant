@@ -169,4 +169,9 @@ class PersonalityEngine:
             for alert in context["alerts"]:
                 lines.append(f"- WARNUNG: {alert}")
 
+        if "memories" in context and context["memories"]:
+            lines.append("- Relevante Erinnerungen:")
+            for mem in context["memories"][:3]:
+                lines.append(f"  * {mem[:200]}")
+
         return "\n".join(lines)

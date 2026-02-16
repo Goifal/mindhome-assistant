@@ -8,18 +8,26 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from typing import Optional
 
+from .audit import audit_log
 from .brain import AssistantBrain
 from .config import settings
+from .middleware import (
+    RateLimitMiddleware,
+    RequestLoggingMiddleware,
+    StructuredFormatter,
+)
 from .websocket import ws_manager, emit_speaking
 
-# Logging
+# Structured Logging konfigurieren
+handler = logging.StreamHandler()
+handler.setFormatter(StructuredFormatter())
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    datefmt="%H:%M:%S",
+    handlers=[handler],
 )
 logger = logging.getLogger("mindhome-assistant")
 
@@ -37,7 +45,7 @@ async def lifespan(app: FastAPI):
 
     health = await brain.health_check()
     for component, status in health["components"].items():
-        icon = "OK" if status == "connected" else "!!"
+        icon = "OK" if status in ("connected", "running") else "!!"
         logger.info(" [%s] %s: %s", icon, component, status)
 
     logger.info(" Autonomie: Level %d (%s)",
@@ -61,12 +69,37 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ----- Middleware (Reihenfolge wichtig: zuletzt hinzugefuegt = zuerst ausgefuehrt) -----
 
-# ----- Request/Response Modelle -----
+# CORS Policy - nur HA und lokales Netzwerk
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        settings.ha_url,
+        "http://localhost:*",
+        "http://127.0.0.1:*",
+        "http://192.168.*",
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT"],
+    allow_headers=["*"],
+)
+
+# Rate Limiting: 30 Anfragen pro Minute pro IP
+app.add_middleware(RateLimitMiddleware, max_requests=30, window_seconds=60)
+
+# Request Logging mit IDs und Latenz
+app.add_middleware(RequestLoggingMiddleware)
+
+
+# ----- Request/Response Modelle mit Validation -----
+
+MAX_TEXT_LENGTH = 2000
+
 
 class ChatRequest(BaseModel):
-    text: str
-    person: Optional[str] = None
+    text: str = Field(..., min_length=1, max_length=MAX_TEXT_LENGTH)
+    person: Optional[str] = Field(None, max_length=100)
 
 
 class ChatResponse(BaseModel):
@@ -77,7 +110,7 @@ class ChatResponse(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
-    autonomy_level: Optional[int] = None
+    autonomy_level: Optional[int] = Field(None, ge=1, le=5)
 
 
 # ----- API Endpoints -----
@@ -97,10 +130,11 @@ async def chat(request: ChatRequest):
     POST /api/assistant/chat
     {"text": "Mach das Licht im Wohnzimmer aus", "person": "Max"}
     """
-    if not request.text.strip():
+    text = request.text.strip()
+    if not text:
         raise HTTPException(status_code=400, detail="Kein Text angegeben")
 
-    result = await brain.process(request.text, request.person)
+    result = await brain.process(text, request.person)
     return ChatResponse(**result)
 
 
@@ -115,8 +149,18 @@ async def search_memory(q: str):
     """Sucht im Langzeitgedaechtnis."""
     if not q.strip():
         raise HTTPException(status_code=400, detail="Kein Suchbegriff")
+    if len(q) > MAX_TEXT_LENGTH:
+        raise HTTPException(status_code=400, detail="Suchbegriff zu lang")
     results = await brain.memory.search_memories(q)
     return {"query": q, "results": results}
+
+
+@app.get("/api/assistant/audit")
+async def get_audit(limit: int = 50):
+    """Audit Log - Letzte ausgefuehrte Aktionen."""
+    if limit < 1 or limit > 200:
+        limit = 50
+    return {"entries": audit_log.get_recent(limit)}
 
 
 @app.get("/api/assistant/settings")
@@ -170,7 +214,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 if event == "assistant.text":
                     text = message.get("data", {}).get("text", "")
                     person = message.get("data", {}).get("person")
-                    if text:
+                    if text and len(text) <= MAX_TEXT_LENGTH:
                         result = await brain.process(text, person)
                         await emit_speaking(result["response"])
 
