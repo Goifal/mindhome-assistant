@@ -31,7 +31,7 @@ brain = AssistantBrain()
 async def lifespan(app: FastAPI):
     """Startup und Shutdown."""
     logger.info("=" * 50)
-    logger.info(" MindHome Assistant v0.5.0 startet...")
+    logger.info(" MindHome Assistant v0.6.0 startet...")
     logger.info("=" * 50)
     await brain.initialize()
 
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MindHome Assistant",
     description="Lokaler KI-Sprachassistent fuer Home Assistant",
-    version="0.5.0",
+    version="0.6.0",
     lifespan=lifespan,
 )
 
@@ -248,6 +248,33 @@ async def get_delivery(urgency: str = "medium"):
     """Prueft wie eine Meldung bei aktueller Aktivitaet zugestellt wuerde."""
     result = await brain.activity.should_deliver(urgency)
     return result
+
+
+# ----- Summarizer Endpoints (Phase 7) -----
+
+@app.get("/api/assistant/summaries")
+async def get_summaries():
+    """Die neuesten Tages-Zusammenfassungen."""
+    summaries = await brain.summarizer.get_recent_summaries(limit=7)
+    return {"summaries": summaries}
+
+
+@app.get("/api/assistant/summaries/search")
+async def search_summaries(q: str):
+    """Sucht in allen Zusammenfassungen (Vektor-Suche)."""
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="Kein Suchbegriff")
+    results = await brain.summarizer.search_summaries(q, limit=5)
+    return {"query": q, "results": results}
+
+
+@app.post("/api/assistant/summaries/generate/{date}")
+async def generate_summary(date: str):
+    """Erstellt manuell eine Tages-Zusammenfassung fuer ein bestimmtes Datum."""
+    summary = await brain.summarizer.summarize_day(date)
+    if not summary:
+        return {"date": date, "summary": None, "message": "Keine Konversationen fuer diesen Tag"}
+    return {"date": date, "summary": summary}
 
 
 # ----- Action Planner Endpoints (Phase 4) -----

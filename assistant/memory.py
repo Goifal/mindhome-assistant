@@ -62,7 +62,7 @@ class MemoryManager:
     # ----- Working Memory (Redis) -----
 
     async def add_conversation(self, role: str, content: str):
-        """Speichert eine Nachricht im Working Memory."""
+        """Speichert eine Nachricht im Working Memory + Tages-Archiv."""
         if not self.redis:
             return
 
@@ -71,10 +71,18 @@ class MemoryManager:
             "content": content,
             "timestamp": datetime.now().isoformat(),
         }
+        entry_json = json.dumps(entry)
 
-        await self.redis.lpush("mha:conversations", json.dumps(entry))
-        # Nur die letzten 50 Nachrichten behalten
+        # Working Memory (letzte 50)
+        await self.redis.lpush("mha:conversations", entry_json)
         await self.redis.ltrim("mha:conversations", 0, 49)
+
+        # Tages-Archiv (Phase 7: fuer DailySummarizer)
+        today = datetime.now().strftime("%Y-%m-%d")
+        archive_key = f"mha:archive:{today}"
+        await self.redis.rpush(archive_key, entry_json)
+        # Archiv 30 Tage behalten
+        await self.redis.expire(archive_key, 30 * 86400)
 
     async def get_recent_conversations(self, limit: int = 5) -> list[dict]:
         """Holt die letzten Gespraeche aus dem Working Memory."""
@@ -95,6 +103,19 @@ class MemoryManager:
         if not self.redis:
             return None
         return await self.redis.get(f"mha:context:{key}")
+
+    async def get_conversations_for_date(self, date: str) -> list[dict]:
+        """Holt alle Konversationen eines Tages aus dem Archiv (Phase 7)."""
+        if not self.redis:
+            return []
+
+        try:
+            archive_key = f"mha:archive:{date}"
+            entries = await self.redis.lrange(archive_key, 0, -1)
+            return [json.loads(e) for e in entries]
+        except Exception as e:
+            logger.error("Fehler beim Laden des Archivs fuer %s: %s", date, e)
+            return []
 
     # ----- Episodic Memory (ChromaDB) -----
 

@@ -24,6 +24,7 @@ from .model_router import ModelRouter
 from .ollama_client import OllamaClient
 from .personality import PersonalityEngine
 from .proactive import ProactiveManager
+from .summarizer import DailySummarizer
 from .websocket import emit_thinking, emit_speaking, emit_action
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ class AssistantBrain:
         self.feedback = FeedbackTracker()
         self.activity = ActivityEngine(self.ha)
         self.proactive = ProactiveManager(self)
+        self.summarizer = DailySummarizer(self.ollama)
         self.memory_extractor: Optional[MemoryExtractor] = None
         self.action_planner = ActionPlanner(self.ollama, self.executor, self.validator)
 
@@ -67,8 +69,15 @@ class AssistantBrain:
         # Feedback Tracker initialisieren (Phase 5)
         await self.feedback.initialize(redis_client=self.memory.redis)
 
+        # Daily Summarizer initialisieren (Phase 7)
+        self.summarizer.memory = self.memory
+        await self.summarizer.initialize(
+            redis_client=self.memory.redis,
+            chroma_collection=self.memory.chroma_collection,
+        )
+
         await self.proactive.start()
-        logger.info("MindHome Assistant Brain initialisiert (inkl. Feedback + Activity Engine)")
+        logger.info("MindHome Assistant Brain initialisiert (alle Phasen aktiv)")
 
     async def process(self, text: str, person: Optional[str] = None) -> dict:
         """
@@ -104,6 +113,11 @@ class AssistantBrain:
         memory_context = self._build_memory_context(memories)
         if memory_context:
             system_prompt += memory_context
+
+        # Langzeit-Summaries bei Fragen ueber die Vergangenheit (Phase 7)
+        summary_context = await self._get_summary_context(text)
+        if summary_context:
+            system_prompt += summary_context
 
         # 4. Letzte Gespraeche laden (Working Memory)
         recent = await self.memory.get_recent_conversations(limit=5)
@@ -251,6 +265,7 @@ class AssistantBrain:
                 "action_planner": "active",
                 "feedback_tracker": "running" if self.feedback._running else "stopped",
                 "activity_engine": "active",
+                "summarizer": "running" if self.summarizer._running else "stopped",
                 "proactive": "running" if self.proactive._running else "stopped",
             },
             "models_available": models,
@@ -280,6 +295,40 @@ class AssistantBrain:
 
         return ""
 
+    async def _get_summary_context(self, text: str) -> str:
+        """Holt relevante Langzeit-Summaries wenn die Frage die Vergangenheit betrifft."""
+        # Keywords die auf Vergangenheits-Fragen hindeuten
+        past_keywords = [
+            "gestern", "letzte woche", "letzten monat", "letztes jahr",
+            "vor ", "frueher", "damals", "wann war", "wie war",
+            "erinnerst du", "weisst du noch", "war der", "war die",
+            "im januar", "im februar", "im maerz", "im april", "im mai",
+            "im juni", "im juli", "im august", "im september",
+            "im oktober", "im november", "im dezember",
+            "letzte", "letzten", "letzter", "vorige", "vergangene",
+        ]
+
+        text_lower = text.lower()
+        if not any(kw in text_lower for kw in past_keywords):
+            return ""
+
+        try:
+            summaries = await self.summarizer.search_summaries(text, limit=3)
+            if not summaries:
+                return ""
+
+            parts = ["\n\nLANGZEIT-ERINNERUNGEN (vergangene Tage/Wochen):"]
+            for s in summaries:
+                date = s.get("date", "")
+                stype = s.get("summary_type", "")
+                content = s.get("content", "")
+                parts.append(f"[{stype} {date}]: {content}")
+
+            return "\n".join(parts)
+        except Exception as e:
+            logger.debug("Fehler bei Summary-Kontext: %s", e)
+            return ""
+
     async def _extract_facts_background(
         self,
         user_text: str,
@@ -305,6 +354,7 @@ class AssistantBrain:
     async def shutdown(self):
         """Faehrt MindHome Assistant herunter."""
         await self.proactive.stop()
+        await self.summarizer.stop()
         await self.feedback.stop()
         await self.memory.close()
         logger.info("MindHome Assistant heruntergefahren")

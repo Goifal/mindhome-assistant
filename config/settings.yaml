@@ -6,7 +6,7 @@ assistant:
   # Name des Assistenten - so stellt er sich vor und so reagiert er
   # Aendere diesen Namen zu was du willst (z.B. "Jarvis", "Alfred", "Nova")
   name: "MindHome Assistant"
-  version: "0.5.0"
+  version: "0.6.0"
   language: "de"
 
 # --- Autonomie-Level ---
@@ -169,6 +169,18 @@ feedback:
   score_reduce: 0.30      # Darunter: laengerer Cooldown
   score_normal: 0.50      # Normaler Cooldown
   score_boost: 0.70       # Darueber: kuerzerer Cooldown
+
+# --- Daily Summarizer + Langzeitgedaechtnis (Phase 7) ---
+summarizer:
+  # Wann laeuft der naechtliche Summary-Job
+  run_hour: 3
+  run_minute: 0
+  # Modell fuer Zusammenfassungen (smart fuer bessere Qualitaet)
+  model: "qwen2.5:14b"
+  # Maximale Token pro Zusammenfassung
+  max_tokens_daily: 512
+  max_tokens_weekly: 384
+  max_tokens_monthly: 512
 
 # --- Context Builder ---
 context:
