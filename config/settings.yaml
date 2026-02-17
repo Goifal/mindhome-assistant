@@ -3,6 +3,8 @@
 # ============================================================
 
 assistant:
+  # Name des Assistenten - so stellt er sich vor und so reagiert er
+  # Aendere diesen Namen zu was du willst (z.B. "Jarvis", "Alfred", "Nova")
   name: "MindHome Assistant"
   version: "0.3.0"
   language: "de"

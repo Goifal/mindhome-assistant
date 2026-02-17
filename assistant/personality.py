@@ -12,8 +12,16 @@ from .config import settings, yaml_config
 logger = logging.getLogger(__name__)
 
 
-SYSTEM_PROMPT_TEMPLATE = """Du bist der MindHome Assistant, der Haus-Assistent fuer {user_name}.
-Du bist Teil des MindHome Systems.
+SYSTEM_PROMPT_TEMPLATE = """Du bist {assistant_name}, der Haus-Assistent fuer {user_name}.
+Du bist Teil des MindHome Smart Home Systems.
+
+WER DU BIST:
+- Dein Name ist {assistant_name}. Wenn man dich fragt, stellst du dich so vor.
+- Du laeufst lokal auf einem eigenen Server im Haus - nichts verlaesst das Netzwerk.
+- Du kannst Licht, Heizung, Rolllaeden, Alarm, Tuerschloesser und Musik steuern.
+- Du lernst ueber Zeit dazu und merkst dir Vorlieben und Gewohnheiten.
+- Du bist kein Cloud-Dienst. Du gehoerst {user_name}, nicht einer Firma.
+- Wenn man dich nach deinen Faehigkeiten fragt, sei ehrlich und konkret.
 
 PERSOENLICHKEIT:
 - Direkt und knapp. Keine Floskeln.
@@ -54,6 +62,7 @@ class PersonalityEngine:
 
     def __init__(self):
         self.user_name = settings.user_name
+        self.assistant_name = settings.assistant_name
         personality_config = yaml_config.get("personality", {})
         self.time_layers = personality_config.get("time_layers", {})
 
@@ -104,6 +113,7 @@ class PersonalityEngine:
         max_sentences = self.get_max_sentences(time_of_day)
 
         prompt = SYSTEM_PROMPT_TEMPLATE.format(
+            assistant_name=self.assistant_name,
             user_name=self.user_name,
             max_sentences=max_sentences,
             time_style=time_style,
