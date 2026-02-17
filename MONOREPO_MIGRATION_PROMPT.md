@@ -6,6 +6,79 @@ Integriere den **MindHome Assistant** (AI-Backend, laeuft auf PC 2) in das beste
 
 ---
 
+## WICHTIG: Vorgehensweise — Original-Code uebernehmen, NICHT neu schreiben
+
+Der MindHome Assistant besteht aus ~5.800 Zeilen Python-Code in 21 Modulen.
+**Du sollst den Code NICHT neu schreiben**, sondern die Originaldateien lesen und 1:1 uebernehmen.
+
+### Schritt-fuer-Schritt Anleitung:
+
+1. **Original-Repo klonen** (temporaer, zum Lesen):
+   ```bash
+   git clone https://github.com/Goifal/mindhome-assistant.git /tmp/mha
+   ```
+
+2. **Dateien kopieren** (in die richtige Monorepo-Struktur):
+   ```bash
+   # Infra-Dateien
+   cp /tmp/mha/Dockerfile          assistant/Dockerfile
+   cp /tmp/mha/docker-compose.yml  assistant/docker-compose.yml
+   cp /tmp/mha/requirements.txt    assistant/requirements.txt
+   cp /tmp/mha/install.sh          assistant/install.sh
+
+   # Config
+   mkdir -p assistant/config
+   cp /tmp/mha/config/settings.yaml assistant/config/settings.yaml
+
+   # Python-Module (ALLE 21 Dateien 1:1)
+   mkdir -p assistant/assistant
+   cp /tmp/mha/assistant/*.py      assistant/assistant/
+   ```
+
+3. **Neue Dateien erstellen** (existieren noch NICHT im Original):
+   - `assistant/.env.example` — Template fuer Environment-Variablen
+   - `shared/` Ordner — Gemeinsame API-Schemas (Details unten)
+   - `docs/PROJECT_MINDHOME_ASSISTANT.md` — basierend auf `/tmp/mha/PROJECT_MINDHOME_ASSISTANT.md`
+
+4. **Bestehende Dateien anpassen** (im mindhome Repo):
+   - `README.md` — Neuen Assistant-Abschnitt hinzufuegen
+   - `STRUCTURE.md` — assistant/ und shared/ Abschnitte hinzufuegen
+   - `.gitignore` — Assistant-spezifische Eintraege
+
+5. **Aufraeumen:**
+   ```bash
+   rm -rf /tmp/mha
+   ```
+
+Falls `git clone` nicht funktioniert, lies jede Datei einzeln via curl:
+```bash
+BASE="https://raw.githubusercontent.com/Goifal/mindhome-assistant/main"
+
+# Infra
+curl -sL $BASE/Dockerfile > assistant/Dockerfile
+curl -sL $BASE/docker-compose.yml > assistant/docker-compose.yml
+curl -sL $BASE/requirements.txt > assistant/requirements.txt
+curl -sL $BASE/install.sh > assistant/install.sh
+curl -sL $BASE/config/settings.yaml > assistant/config/settings.yaml
+
+# Alle 21 Python-Module
+for f in __init__.py main.py brain.py config.py context_builder.py \
+         ollama_client.py ha_client.py model_router.py personality.py \
+         mood_detector.py memory.py semantic_memory.py memory_extractor.py \
+         function_calling.py function_validator.py action_planner.py \
+         proactive.py feedback.py autonomy.py activity.py summarizer.py \
+         websocket.py; do
+    curl -sL $BASE/assistant/$f > assistant/assistant/$f
+done
+
+# Doku
+curl -sL $BASE/PROJECT_MINDHOME_ASSISTANT.md > docs/PROJECT_MINDHOME_ASSISTANT.md
+```
+
+Die Modul-Beschreibungen weiter unten dienen als **Referenz und Verifikation** — nicht als Implementierungsvorlage.
+
+---
+
 ## Aktueller Zustand: mindhome Repo (NICHT VERAENDERN)
 
 Das Repo hat bereits diese Struktur:
