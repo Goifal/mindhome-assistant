@@ -150,6 +150,28 @@ python-dotenv==1.0.1
 httpx==0.28.1
 ```
 
+#### `assistant/.env.example`
+
+```bash
+# Home Assistant Verbindung
+HA_URL=http://192.168.1.100:8123
+HA_TOKEN=dein_long_lived_access_token_hier
+
+# Ollama (laeuft nativ auf dem Host)
+OLLAMA_URL=http://host.docker.internal:11434
+
+# Datenbanken (Docker-intern)
+REDIS_URL=redis://redis:6379
+CHROMA_URL=http://chromadb:8000
+
+# Benutzer
+USER_NAME=Max
+
+# Server
+ASSISTANT_HOST=0.0.0.0
+ASSISTANT_PORT=8200
+```
+
 #### `assistant/install.sh`
 
 Erstelle ein One-Click Install-Script das:
@@ -157,8 +179,8 @@ Erstelle ein One-Click Install-Script das:
 2. Ollama installieren falls nicht vorhanden
 3. Ollama fuer Netzwerk konfigurieren (0.0.0.0:11434)
 4. LLM Models runterladen (qwen2.5:3b pflicht, qwen2.5:14b optional)
-5. .env Datei erstellen lassen (HA_URL, HA_TOKEN, USER_NAME)
-6. Data-Verzeichnisse anlegen
+5. `.env` aus `.env.example` kopieren und User zur Eingabe auffordern (HA_URL, HA_TOKEN, USER_NAME)
+6. Data-Verzeichnisse anlegen (data/assistant, data/chroma, data/redis)
 7. Docker Stack bauen und starten
 
 #### `assistant/config/settings.yaml`
@@ -350,49 +372,88 @@ Leere Datei.
 ##### `assistant/assistant/main.py` (~409 Zeilen)
 FastAPI Server mit folgenden Endpoints:
 
+**Pydantic Request/Response Modelle (inline in main.py definiert):**
+
+```python
+class ChatRequest(BaseModel):
+    text: str
+    person: Optional[str] = None
+
+class ChatResponse(BaseModel):
+    response: str
+    actions: list = []
+    model_used: str = ""
+    context_room: str = ""
+
+class FeedbackRequest(BaseModel):
+    notification_id: str = ""
+    event_type: str = ""
+    feedback_type: str  # ignored, dismissed, acknowledged, engaged, thanked
+
+class SettingsUpdate(BaseModel):
+    autonomy_level: Optional[int] = None
+```
+
 **Core:**
-- `POST /api/assistant/chat` — Body: `ChatRequest(text, person?, room?)` → `ChatResponse(response, actions[], person, mood)`
+- `GET /` — Root-Info (Name, Version, Status, Link zu /docs)
+- `POST /api/assistant/chat` — Body: `ChatRequest` → `ChatResponse`
 - `GET /api/assistant/context` — Debug: aktueller Kontext-Snapshot
 - `GET /api/assistant/health` — Komponenten-Health (Ollama, HA, ChromaDB, Redis)
-- `GET /api/assistant/status` — Jarvis-Style Status-Report
+- `GET /api/assistant/status` — Jarvis-Style Status-Report (mit optionalem ?person= Query-Param)
 
 **Memory:**
-- `GET /api/assistant/memory/facts` — Alle gespeicherten Fakten
-- `GET /api/assistant/memory/facts/search?q=...` — Vektor-Suche
+- `GET /api/assistant/memory/search?q=...` — Episodic Memory Vektor-Suche
+- `GET /api/assistant/memory/facts` — Alle gespeicherten Fakten (Semantic Memory)
+- `GET /api/assistant/memory/facts/search?q=...&person=...` — Fakten-Vektor-Suche (optional person Filter)
 - `GET /api/assistant/memory/facts/person/{name}` — Fakten zu einer Person
 - `GET /api/assistant/memory/facts/category/{cat}` — Fakten nach Kategorie
 - `DELETE /api/assistant/memory/facts/{id}` — Fakt loeschen
-- `GET /api/assistant/memory/stats` — Memory-Statistiken
+- `GET /api/assistant/memory/stats` — Memory-Statistiken (semantic + episodic + working)
 
 **Feedback:**
-- `PUT /api/assistant/feedback` — Feedback submitten
-- `GET /api/assistant/feedback/stats` — Analytics
-- `GET /api/assistant/feedback/scores` — Alle Event-Scores
+- `PUT /api/assistant/feedback` — Body: `FeedbackRequest` — Feedback submitten
+- `GET /api/assistant/feedback/stats` — Analytics (alle Event-Typen)
+- `GET /api/assistant/feedback/stats/{event_type}` — Analytics fuer einen bestimmten Event-Typ
+- `GET /api/assistant/feedback/scores` — Alle Event-Scores auf einen Blick
 
 **Activity/Mood:**
 - `GET /api/assistant/activity` — Aktuelle Aktivitaetserkennung
-- `GET /api/assistant/activity/delivery` — Wuerde Notification zugestellt?
+- `GET /api/assistant/activity/delivery?urgency=...` — Wuerde Notification bei aktueller Aktivitaet zugestellt?
 - `GET /api/assistant/mood` — Aktuelle Stimmungserkennung
 
 **Summaries:**
-- `GET /api/assistant/summaries` — Letzte Daily Summaries
-- `GET /api/assistant/summaries/search?q=...` — Suche
+- `GET /api/assistant/summaries` — Letzte 7 Tages-Zusammenfassungen
+- `GET /api/assistant/summaries/search?q=...` — Vektor-Suche in Summaries
 - `POST /api/assistant/summaries/generate/{date}` — Manuell generieren
 
 **Settings:**
 - `GET /api/assistant/planner/last` — Letzter Action-Plan
-- `GET /api/assistant/settings` — Aktuelle Config
-- `PUT /api/assistant/settings` — Autonomie-Level aendern
+- `GET /api/assistant/settings` — Aktuelle Config (Autonomie, Models, User, Language)
+- `PUT /api/assistant/settings` — Body: `SettingsUpdate` — Autonomie-Level aendern
 
 **WebSocket:**
-- `ws://host:8200/api/assistant/ws` — Echtzeit-Events (thinking, speaking, action, proactive)
+- `ws://host:8200/api/assistant/ws` — Echtzeit-Events
 
-Startup: `@asynccontextmanager lifespan` initialisiert Brain.
+  Server → Client Events (String-Format):
+  - `assistant.thinking` — Assistent denkt nach
+  - `assistant.speaking` — Assistent spricht (mit text im data)
+  - `assistant.action` — Assistent fuehrt Aktion aus (function, args, result)
+  - `assistant.listening` — Assistent hoert zu
+  - `assistant.proactive` — Proaktive Meldung (text, event_type, urgency, notification_id)
+
+  Client → Server Events:
+  - `assistant.text` — Text-Eingabe (data.text, data.person)
+  - `assistant.feedback` — Feedback auf Meldung (notification_id, event_type, feedback_type)
+  - `assistant.interrupt` — Unterbrechung (reserviert)
+
+  Event-Format: `{"event": "assistant.thinking", "data": {...}, "timestamp": "ISO8601"}`
+
+Startup: `@asynccontextmanager lifespan` initialisiert Brain. FastAPI version-Feld ist "0.7.0", Startup-Log zeigt "v0.8.0" — beides uebernehmen wie es ist.
 
 ##### `assistant/assistant/brain.py` (~371 Zeilen)
 Zentraler Orchestrator `AssistantBrain`:
 - Initialisiert alle Komponenten: `ha_client`, `ollama`, `context_builder`, `model_router`, `personality`, `memory`, `mood_detector`, `function_calling`, `function_validator`, `action_planner`, `proactive`, `feedback`, `activity`, `summarizer`, `websocket`
-- `process(text, person, room)` — Hauptmethode:
+- `process(text, person)` — Hauptmethode (ACHTUNG: nur text + person, KEIN room Parameter):
   1. WebSocket: "thinking" Event
   2. Context Builder: Haus-Zustand + Erinnerungen sammeln
   3. Mood Detector: Verhaltenssignale auswerten
@@ -426,11 +487,12 @@ Zentraler Orchestrator `AssistantBrain`:
 
 ##### `assistant/assistant/ha_client.py` (~152 Zeilen)
 `HomeAssistantClient` — Interface zu Home Assistant:
-- `get_states()` — Alle Entity-States
-- `call_service(domain, service, data)` — Service aufrufen
-- `get_entity(entity_id)` — Einzelne Entity
-- Auth via Long-Lived Access Token
+- `get_states()` — Alle Entity-States (GET /api/states)
+- `get_state(entity_id)` — Einzelne Entity (GET /api/states/{entity_id}) — wird von get_entity_state Function genutzt
+- `call_service(domain, service, data)` — Service aufrufen (POST /api/services/{domain}/{service})
+- Auth via Long-Lived Access Token (Header: Authorization: Bearer TOKEN)
 - Nutzt `aiohttp` fuer async HTTP
+- Base-URL aus settings: `settings.ha_url`
 
 ##### `assistant/assistant/model_router.py` (~63 Zeilen)
 `ModelRouter` — Entscheidet Fast vs Smart:
@@ -487,19 +549,21 @@ Zentraler Orchestrator `AssistantBrain`:
 - Speichert in Semantic Memory
 
 ##### `assistant/assistant/function_calling.py` (~469 Zeilen)
-`FunctionExecutor` — 10 Tool-Functions:
-- `set_light(room, state, brightness?, color_temp?)`
-- `set_climate(room, temperature, mode?)`
-- `activate_scene(scene)`
-- `set_cover(room, position)`
-- `play_media(room, action, query?)`
-- `set_alarm(mode)`
-- `lock_door(door, action)`
-- `send_notification(message, target?)`
-- `get_entity_state(entity_id)`
-- `set_presence_mode(mode)`
-- Jede Function mapped auf HA Service Calls
-- Output-Format kompatibel mit Ollama Tool-Calling
+`FunctionExecutor` — 10 Tool-Functions (alle implementiert):
+- `set_light(room, state, brightness?)` — light.turn_on/turn_off
+- `set_climate(room, temperature, mode?)` — climate.set_temperature
+- `activate_scene(scene)` — scene.turn_on
+- `set_cover(room, position)` — cover.set_cover_position
+- `play_media(action, room?)` — media_player.media_play/pause/stop/next/previous
+- `set_alarm(mode)` — alarm_control_panel.alarm_arm_home/arm_away/disarm
+- `lock_door(door, action)` — lock.lock/unlock
+- `send_notification(message, target?)` — notify.notify / tts.speak / persistent_notification.create
+- `get_entity_state(entity_id)` — liest Entity via ha_client.get_state()
+- `set_presence_mode(mode)` — input_select.select_option oder Event-Fallback
+
+Jede Function ist als Ollama Tool-Definition (JSON Schema) in `ASSISTANT_TOOLS` definiert.
+`FunctionExecutor` hat `_find_entity(domain, search)` Hilfsmethode fuer Entity-Lookup.
+Alle `_exec_*` Handler returnen `{"success": bool, "message": str}` Dicts.
 
 ##### `assistant/assistant/function_validator.py` (~101 Zeilen)
 `FunctionValidator` — Sicherheitspruefungen:
@@ -563,15 +627,26 @@ Zentraler Orchestrator `AssistantBrain`:
 - `generate_daily(date)`, `generate_weekly()`, `generate_monthly()`
 
 ##### `assistant/assistant/websocket.py` (~108 Zeilen)
-`WebSocketManager` — Echtzeit-Events:
-- Verwaltet WebSocket-Verbindungen
-- Server → Client Events: thinking, speaking, action, proactive
-- Client → Server Events: text, feedback, interrupt
-- Broadcast an alle verbundenen Clients
+`ConnectionManager` Klasse + globale Helper-Functions:
+- `ConnectionManager` verwaltet `active_connections: list[WebSocket]`
+- `connect(ws)`, `disconnect(ws)`, `broadcast(event, data)`, `send_personal(ws, event, data)`
+- Globale Instanz: `ws_manager = ConnectionManager()`
+- Helper-Functions (auf Modul-Ebene):
+  - `emit_thinking()` → broadcast "assistant.thinking"
+  - `emit_speaking(text)` → broadcast "assistant.speaking"
+  - `emit_action(function_name, args, result)` → broadcast "assistant.action"
+  - `emit_listening()` → broadcast "assistant.listening"
+  - `emit_proactive(text, event_type, urgency, notification_id)` → broadcast "assistant.proactive"
+- Event-Format: `{"event": "...", "data": {...}, "timestamp": "ISO8601"}`
 
 ---
 
-### 2. Ordner `shared/` anlegen (Gemeinsame API-Vertraege)
+### 2. Ordner `shared/` anlegen (Gemeinsame API-Vertraege) — NEU
+
+> **HINWEIS:** `shared/` ist KOMPLETT NEU und existiert noch nicht im aktuellen Code.
+> Die Request/Response-Modelle sind aktuell inline in `assistant/assistant/main.py` definiert.
+> `shared/` dient dazu, dass Addon und Assistant die gleichen Schemas nutzen koennen.
+> Die inline-Modelle in main.py sollen durch Imports aus shared/ ersetzt werden.
 
 ```
 shared/
@@ -586,53 +661,58 @@ shared/
 
 ##### `shared/schemas/chat_request.py`
 ```python
+"""Chat Request Schema — wird von Addon (PC 1) gesendet und von Assistant (PC 2) empfangen."""
 from pydantic import BaseModel
+from typing import Optional
 
 class ChatRequest(BaseModel):
     text: str
-    person: str | None = None
-    room: str | None = None
-    speaker_confidence: float | None = None  # Speaker ID (zukuenftig)
+    person: Optional[str] = None
+    # NEU: Diese Felder existieren noch nicht im aktuellen Code,
+    # werden aber fuer zukuenftige Features gebraucht:
+    room: Optional[str] = None                    # Raum-Erkennung
+    speaker_confidence: Optional[float] = None    # Speaker ID Score (0.0-1.0)
 ```
 
 ##### `shared/schemas/chat_response.py`
 ```python
+"""Chat Response Schema — wird von Assistant (PC 2) zurueckgegeben."""
 from pydantic import BaseModel
-
-class ActionResult(BaseModel):
-    function: str
-    params: dict
-    success: bool
-    result: str | None = None
+from typing import Optional
 
 class ChatResponse(BaseModel):
     response: str
-    actions: list[ActionResult] = []
-    person: str | None = None
-    mood: str | None = None
-    model_used: str | None = None
+    actions: list = []          # Liste von Action-Dicts (function, args, result)
+    model_used: str = ""        # "qwen2.5:3b" oder "qwen2.5:14b"
+    context_room: str = ""      # Erkannter Raum-Kontext
 ```
 
 ##### `shared/schemas/events.py`
 ```python
+"""
+Event-Typen fuer WebSocket-Kommunikation.
+Format: {"event": "assistant.speaking", "data": {...}, "timestamp": "ISO8601"}
+"""
 from pydantic import BaseModel
-from enum import Enum
+from typing import Optional
 
-class EventType(str, Enum):
-    THINKING = "thinking"
-    SPEAKING = "speaking"
-    ACTION = "action"
-    PROACTIVE = "proactive"
-    SPEAKER_IDENTIFIED = "speaker_identified"
+# Event-Namen als Konstanten (String-basiert, KEIN Enum)
+# So werden sie aktuell im Code verwendet
+EVENT_THINKING = "assistant.thinking"
+EVENT_SPEAKING = "assistant.speaking"
+EVENT_ACTION = "assistant.action"
+EVENT_LISTENING = "assistant.listening"
+EVENT_PROACTIVE = "assistant.proactive"
 
 class MindHomeEvent(BaseModel):
-    type: EventType
-    data: dict = {}
-    timestamp: str | None = None
+    event: str                         # z.B. "assistant.speaking"
+    data: dict = {}                    # Event-spezifische Daten
+    timestamp: Optional[str] = None    # ISO8601
 ```
 
 ##### `shared/constants.py`
 ```python
+"""Gemeinsame Konstanten fuer Addon und Assistant."""
 ASSISTANT_PORT = 8200
 ADDON_INGRESS_PORT = 5000
 CHROMADB_PORT = 8100
@@ -666,13 +746,20 @@ Bestehende Struktur beibehalten, `assistant/` und `shared/` Abschnitte hinzufueg
 
 #### `docs/PROJECT_MINDHOME_ASSISTANT.md` anlegen
 
-Ausfuehrliche Dokumentation des Assistant-Systems. Soll enthalten:
-- Architektur-Uebersicht (2-PC Split)
-- Alle Module mit Beschreibung
-- Alle API-Endpoints
-- Konfigurationsreferenz (settings.yaml)
-- Install-Anleitung
-- Kommunikation zwischen Add-on und Assistant
+Ausfuehrliche Dokumentation des Assistant-Systems (~1700 Zeilen). Soll enthalten:
+- Architektur-Uebersicht (2-PC Split: PC 1 HAOS + PC 2 Ubuntu)
+- Alle 21 Module mit Beschreibung und Verantwortlichkeiten
+- Alle API-Endpoints (REST + WebSocket) mit Beispielen
+- Konfigurationsreferenz (settings.yaml — jede Sektion erklaert)
+- Install-Anleitung (Docker, Ollama, .env)
+- Memory-System Erklaerung (Working + Episodic + Semantic)
+- Function Calling: Alle 10 Functions mit Parametern
+- Persoenlichkeits-Engine: 5 Tageszeit-Layers
+- Kommunikation zwischen Add-on und Assistant (ueber HA REST API)
+
+> **HINWEIS:** Im aktuellen mindhome-assistant Repo gibt es bereits eine umfangreiche
+> `PROJECT_MINDHOME_ASSISTANT.md` an Root. Den Inhalt als Basis nehmen und nach
+> `docs/PROJECT_MINDHOME_ASSISTANT.md` verschieben.
 
 ---
 
@@ -765,6 +852,29 @@ mindhome/
 4. **Deutsche Kommentare im Code** — konsistent mit dem Addon
 5. **Commit-Nachricht:** `feat: Add MindHome Assistant as monorepo component`
 6. **Push auf den zugewiesenen Branch**
+
+## Referenz-Quellcode
+
+Die vollstaendigen Original-Dateien sind im Repo `Goifal/mindhome-assistant` verfuegbar.
+Falls du Zugriff hast, lies die Originale fuer exakte Implementierungsdetails:
+
+```
+https://github.com/Goifal/mindhome-assistant
+
+Wichtigste Dateien:
+- assistant/main.py          (409 Zeilen — FastAPI Server, alle Endpoints, Pydantic-Modelle)
+- assistant/brain.py         (371 Zeilen — Orchestrator, process()-Methode)
+- assistant/function_calling.py (469 Zeilen — Alle 10 Tool-Functions + ASSISTANT_TOOLS)
+- assistant/personality.py   (293 Zeilen — System-Prompt Builder)
+- assistant/semantic_memory.py (427 Zeilen — ChromaDB + Redis Fakten-Speicher)
+- assistant/proactive.py     (450 Zeilen — Proaktive Benachrichtigungen)
+- assistant/summarizer.py    (429 Zeilen — Tages/Wochen/Monats-Zusammenfassungen)
+- assistant/websocket.py     (108 Zeilen — ConnectionManager + emit_* Helpers)
+- config/settings.yaml       (228 Zeilen — Vollstaendige Konfiguration)
+- docker-compose.yml         (70 Zeilen — 3 Services)
+- Dockerfile                 (26 Zeilen)
+- install.sh                 (190 Zeilen — One-Click Setup)
+```
 
 ## Kontext: Wie Addon und Assistant kommunizieren
 
