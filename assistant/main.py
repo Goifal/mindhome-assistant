@@ -31,7 +31,7 @@ brain = AssistantBrain()
 async def lifespan(app: FastAPI):
     """Startup und Shutdown."""
     logger.info("=" * 50)
-    logger.info(" MindHome Assistant v0.1.0 startet...")
+    logger.info(" MindHome Assistant v0.2.0 startet...")
     logger.info("=" * 50)
     await brain.initialize()
 
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MindHome Assistant",
     description="Lokaler KI-Sprachassistent fuer Home Assistant",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -112,11 +112,74 @@ async def get_context():
 
 @app.get("/api/assistant/memory/search")
 async def search_memory(q: str):
-    """Sucht im Langzeitgedaechtnis."""
+    """Sucht im Langzeitgedaechtnis (Episodic Memory)."""
     if not q.strip():
         raise HTTPException(status_code=400, detail="Kein Suchbegriff")
     results = await brain.memory.search_memories(q)
     return {"query": q, "results": results}
+
+
+# ----- Semantic Memory Endpoints (Phase 2) -----
+
+@app.get("/api/assistant/memory/facts")
+async def get_all_facts():
+    """Alle gespeicherten Fakten im semantischen Gedaechtnis."""
+    facts = await brain.memory.semantic.get_all_facts()
+    stats = await brain.memory.semantic.get_stats()
+    return {"facts": facts, "stats": stats}
+
+
+@app.get("/api/assistant/memory/facts/search")
+async def search_facts(q: str, person: Optional[str] = None):
+    """Sucht relevante Fakten per Vektor-Suche."""
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="Kein Suchbegriff")
+    results = await brain.memory.semantic.search_facts(
+        query=q, limit=10, person=person
+    )
+    return {"query": q, "person": person, "results": results}
+
+
+@app.get("/api/assistant/memory/facts/person/{person}")
+async def get_person_facts(person: str):
+    """Alle Fakten ueber eine bestimmte Person."""
+    facts = await brain.memory.semantic.get_facts_by_person(person)
+    return {"person": person, "facts": facts}
+
+
+@app.get("/api/assistant/memory/facts/category/{category}")
+async def get_category_facts(category: str):
+    """Alle Fakten einer bestimmten Kategorie."""
+    facts = await brain.memory.semantic.get_facts_by_category(category)
+    return {"category": category, "facts": facts}
+
+
+@app.delete("/api/assistant/memory/facts/{fact_id}")
+async def delete_fact(fact_id: str):
+    """Loescht einen einzelnen Fakt."""
+    success = await brain.memory.semantic.delete_fact(fact_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Fakt nicht gefunden")
+    return {"deleted": fact_id}
+
+
+@app.get("/api/assistant/memory/stats")
+async def memory_stats():
+    """Statistiken ueber das gesamte Gedaechtnis."""
+    semantic_stats = await brain.memory.semantic.get_stats()
+    episodic_count = 0
+    if brain.memory.chroma_collection:
+        try:
+            episodic_count = brain.memory.chroma_collection.count()
+        except Exception:
+            pass
+    return {
+        "semantic": semantic_stats,
+        "episodic": {"total_episodes": episodic_count},
+        "working": {
+            "connected": brain.memory.redis is not None,
+        },
+    }
 
 
 @app.get("/api/assistant/settings")
@@ -203,7 +266,7 @@ async def root():
     """Startseite."""
     return {
         "name": "MindHome Assistant",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "status": "running",
         "docs": "/docs",
     }

@@ -4,7 +4,7 @@
 
 assistant:
   name: "MindHome Assistant"
-  version: "0.1.0"
+  version: "0.2.0"
   language: "de"
 
 # --- Autonomie-Level ---
@@ -80,6 +80,23 @@ proactive:
     - "kino"
     - "schlafen"
     - "meditation"
+
+# --- Semantisches Gedaechtnis (Phase 2) ---
+memory:
+  # Fakten-Extraktion nach Gespraechen
+  extraction_enabled: true
+  # Minimale Wortanzahl fuer Extraktion
+  extraction_min_words: 5
+  # Modell fuer Fakten-Extraktion (schnelles reicht)
+  extraction_model: "qwen2.5:3b"
+  # Maximale Fakten pro Person im Kontext
+  max_person_facts_in_context: 5
+  # Maximale relevante Fakten im Kontext
+  max_relevant_facts_in_context: 3
+  # Minimale Confidence fuer Kontext-Einblendung
+  min_confidence_for_context: 0.6
+  # Duplikat-Schwelle (0.0 = exakt gleich, 1.0 = komplett anders)
+  duplicate_threshold: 0.15
 
 # --- Context Builder ---
 context:
