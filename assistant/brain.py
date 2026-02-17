@@ -1,7 +1,7 @@
 """
 MindHome Assistant Brain - Das zentrale Gehirn.
 Verbindet alle Komponenten: Context Builder, Model Router, Personality,
-Function Calling, Memory, Autonomy und Memory Extractor.
+Function Calling, Memory, Autonomy, Memory Extractor und Action Planner.
 """
 
 import asyncio
@@ -9,6 +9,7 @@ import json
 import logging
 from typing import Optional
 
+from .action_planner import ActionPlanner
 from .autonomy import AutonomyManager
 from .config import settings
 from .context_builder import ContextBuilder
@@ -44,6 +45,7 @@ class AssistantBrain:
         self.autonomy = AutonomyManager()
         self.proactive = ProactiveManager(self)
         self.memory_extractor: Optional[MemoryExtractor] = None
+        self.action_planner = ActionPlanner(self.ollama, self.executor, self.validator)
 
     async def initialize(self):
         """Initialisiert alle Komponenten."""
@@ -100,79 +102,92 @@ class AssistantBrain:
             messages.append({"role": conv["role"], "content": conv["content"]})
         messages.append({"role": "user", "content": text})
 
-        # 5. LLM aufrufen (mit Function Calling Tools)
-        response = await self.ollama.chat(
-            messages=messages,
-            model=model,
-            tools=ASSISTANT_TOOLS,
-        )
+        # 5. Komplexe Anfragen ueber Action Planner routen
+        if self.action_planner.is_complex_request(text):
+            logger.info("Komplexe Anfrage erkannt -> Action Planner")
+            planner_result = await self.action_planner.plan_and_execute(
+                text=text,
+                system_prompt=system_prompt,
+                context=context,
+                messages=messages,
+            )
+            response_text = planner_result.get("response", "")
+            executed_actions = planner_result.get("actions", [])
+            model = "qwen2.5:14b"  # Planner nutzt immer smart model
+        else:
+            # 5b. Einfache Anfragen: Direkt LLM aufrufen
+            response = await self.ollama.chat(
+                messages=messages,
+                model=model,
+                tools=ASSISTANT_TOOLS,
+            )
 
-        if "error" in response:
-            logger.error("LLM Fehler: %s", response["error"])
-            return {
-                "response": "Da stimmt etwas nicht. Ich kann gerade nicht denken.",
-                "actions": [],
-                "model_used": model,
-                "error": response["error"],
-            }
+            if "error" in response:
+                logger.error("LLM Fehler: %s", response["error"])
+                return {
+                    "response": "Da stimmt etwas nicht. Ich kann gerade nicht denken.",
+                    "actions": [],
+                    "model_used": model,
+                    "error": response["error"],
+                }
 
-        # 6. Antwort verarbeiten
-        message = response.get("message", {})
-        response_text = message.get("content", "")
-        tool_calls = message.get("tool_calls", [])
-        executed_actions = []
+            # 6. Antwort verarbeiten
+            message = response.get("message", {})
+            response_text = message.get("content", "")
+            tool_calls = message.get("tool_calls", [])
+            executed_actions = []
 
-        # 7. Function Calls ausfuehren
-        if tool_calls:
-            for tool_call in tool_calls:
-                func = tool_call.get("function", {})
-                func_name = func.get("name", "")
-                func_args = func.get("arguments", {})
+            # 7. Function Calls ausfuehren
+            if tool_calls:
+                for tool_call in tool_calls:
+                    func = tool_call.get("function", {})
+                    func_name = func.get("name", "")
+                    func_args = func.get("arguments", {})
 
-                logger.info("Function Call: %s(%s)", func_name, func_args)
+                    logger.info("Function Call: %s(%s)", func_name, func_args)
 
-                # Validierung
-                validation = self.validator.validate(func_name, func_args)
-                if not validation.ok:
-                    if validation.needs_confirmation:
-                        response_text = f"Sicherheitsbestaetigung noetig: {validation.reason}"
-                        executed_actions.append({
-                            "function": func_name,
-                            "args": func_args,
-                            "result": "needs_confirmation",
-                        })
-                        continue
-                    else:
-                        logger.warning("Validation failed: %s", validation.reason)
-                        executed_actions.append({
-                            "function": func_name,
-                            "args": func_args,
-                            "result": f"blocked: {validation.reason}",
-                        })
-                        continue
+                    # Validierung
+                    validation = self.validator.validate(func_name, func_args)
+                    if not validation.ok:
+                        if validation.needs_confirmation:
+                            response_text = f"Sicherheitsbestaetigung noetig: {validation.reason}"
+                            executed_actions.append({
+                                "function": func_name,
+                                "args": func_args,
+                                "result": "needs_confirmation",
+                            })
+                            continue
+                        else:
+                            logger.warning("Validation failed: %s", validation.reason)
+                            executed_actions.append({
+                                "function": func_name,
+                                "args": func_args,
+                                "result": f"blocked: {validation.reason}",
+                            })
+                            continue
 
-                # Ausfuehren
-                result = await self.executor.execute(func_name, func_args)
-                executed_actions.append({
-                    "function": func_name,
-                    "args": func_args,
-                    "result": result,
-                })
+                    # Ausfuehren
+                    result = await self.executor.execute(func_name, func_args)
+                    executed_actions.append({
+                        "function": func_name,
+                        "args": func_args,
+                        "result": result,
+                    })
 
-                # WebSocket: Aktion melden
-                await emit_action(func_name, func_args, result)
+                    # WebSocket: Aktion melden
+                    await emit_action(func_name, func_args, result)
 
-        # Wenn Aktionen, aber keine Text-Antwort: Standard-Bestaetigung
-        if executed_actions and not response_text:
-            if all(a["result"].get("success", False) for a in executed_actions if isinstance(a["result"], dict)):
-                response_text = "Erledigt."
-            else:
-                failed = [
-                    a["result"].get("message", "")
-                    for a in executed_actions
-                    if isinstance(a["result"], dict) and not a["result"].get("success", False)
-                ]
-                response_text = f"Problem: {', '.join(failed)}" if failed else "Teilweise erledigt."
+            # Wenn Aktionen, aber keine Text-Antwort: Standard-Bestaetigung
+            if executed_actions and not response_text:
+                if all(a["result"].get("success", False) for a in executed_actions if isinstance(a["result"], dict)):
+                    response_text = "Erledigt."
+                else:
+                    failed = [
+                        a["result"].get("message", "")
+                        for a in executed_actions
+                        if isinstance(a["result"], dict) and not a["result"].get("success", False)
+                    ]
+                    response_text = f"Problem: {', '.join(failed)}" if failed else "Teilweise erledigt."
 
         # 8. Im Gedaechtnis speichern
         await self.memory.add_conversation("user", text)
@@ -223,6 +238,7 @@ class AssistantBrain:
                 "chromadb": "connected" if self.memory.chroma_collection else "disconnected",
                 "semantic_memory": "connected" if self.memory.semantic.chroma_collection else "disconnected",
                 "memory_extractor": "active" if self.memory_extractor else "inactive",
+                "action_planner": "active",
                 "proactive": "running" if self.proactive._running else "stopped",
             },
             "models_available": models,

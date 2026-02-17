@@ -1297,43 +1297,61 @@ class MoodDetector:
         return self._classify(signals)
 ```
 
-### Phase 4: Action Planner (Multi-Step)
+### Phase 4: Action Planner (Multi-Step) - IMPLEMENTIERT
 
 **Ziel**: Komplexe Befehle funktionieren
 
-```python
-class ActionPlanner:
-    """Plant und fuehrt komplexe Aktionsfolgen aus."""
+**Status**: Vollstaendig implementiert in v0.3.0
 
-    async def plan_and_execute(self, request, context):
-        # 1. LLM plant Schritte
-        plan = await self.llm.plan(request, context)
+**Implementierte Komponenten:**
 
-        # 2. Risiko-Check (Bestaetigung bei kritischen Aktionen)
-        if any(step.risk_level == "high" for step in plan.steps):
-            await self.confirm_with_user(plan)
-            return
+1. **ActionPlanner** (`assistant/action_planner.py`)
+   - Erkennt komplexe Anfragen via Keyword-Heuristik
+   - Iterative Multi-Turn Ausfuehrung: LLM -> Tools -> Ergebnisse -> LLM -> ...
+   - Nutzt immer das smarte Modell (14B) fuer Planung
+   - Maximale Sicherheit: Validierung pro Schritt, Confirmation bei kritischen Aktionen
+   - Maximal 5 Iterationen (Endlosschleifen-Schutz)
+   - Plan-Inspektion via API
 
-        # 3. Parallele + sequentielle Ausfuehrung
-        results = await self.executor.run(plan)
+2. **Brain Integration**
+   - Automatische Erkennung komplexer Anfragen
+   - Routing: einfach -> direkt LLM, komplex -> Action Planner
+   - Einfache Befehle bleiben schnell (kein Overhead)
 
-        # 4. Zusammenfassung
-        return await self.llm.summarize(plan, results)
+3. **REST API**
+   - `GET /api/assistant/planner/last` - Letzten Plan inspizieren
+
+**Ablauf einer komplexen Anfrage:**
+
+```
+User: "Mach alles fertig fuer morgen frueh"
+         |
+    [is_complex_request] -> Ja ("alles", "fertig machen")
+         |
+    [Action Planner]
+         |
+    Iteration 1: LLM plant -> Tool Calls:
+      - get_entity_state("sensor.calendar_tomorrow")
+      - set_climate("schlafzimmer", 18, "heat")
+    -> Ergebnisse zurueck an LLM
+         |
+    Iteration 2: LLM sieht Kalender -> weitere Calls:
+      - activate_scene("gute_nacht")
+      - set_presence_mode("sleep")
+    -> LLM formuliert Zusammenfassung
+         |
+    "Morgen um 9 Standup, um 2 Kundentermin.
+     Schlafzimmer auf 18 Grad, Gute-Nacht-Szene aktiv."
 ```
 
-**Beispiel:**
+**Beispiele fuer komplexe Anfragen:**
 
 ```
-Du: "Mach alles fertig fuer morgen frueh"
-
-Plan:
-  1. Kalender morgen checken -> "09:00 Standup, 14:00 Kunde"
-  2. Wecker stellen -> 06:30
-  3. Klima Schlafzimmer -> Nachtmodus
-  4. Kaffee-Timer -> 06:25
-
-MindHome Assistant: "Morgen um 9 Standup, um 2 Kundentermin.
-Wecker steht auf halb 7, Kaffee kommt 5 Minuten vorher."
+"Mach alles fertig fuer morgen frueh"
+"Ich gehe fuer 3 Tage weg"
+"Besuch kommt in einer Stunde"
+"Party vorbereiten im Wohnzimmer"
+"Zuerst Licht aus, danach Rolllaeden runter und Alarm scharf"
 ```
 
 ### Phase 5: Feedback Loop
@@ -1670,16 +1688,17 @@ Events (Client -> Server):
 | **Phase 1** | Whisper + Ollama + Piper + Context Builder + Functions | MindHome Assistant lebt. Grundlegende Sprachsteuerung funktioniert. |
 | **Phase 2** | Semantic Memory + Memory Extractor + Fakten-DB | MindHome Assistant wird schlauer ueber Zeit. Erinnert sich. **IMPLEMENTIERT** |
 | **Phase 3** | Personality Engine + Mood Detection | MindHome Assistant fuehlt sich menschlicher an. Passt sich an. |
-| **Phase 4** | Action Planner (Multi-Step) | Komplexe Befehle wie "Mach alles fertig" funktionieren. |
+| **Phase 4** | Action Planner (Multi-Step, iterativ) | Komplexe Befehle wie "Mach alles fertig" funktionieren. **IMPLEMENTIERT** |
 | **Phase 5** | Feedback Loop | MindHome Assistant nervt weniger. Lernt was willkommen ist. |
 | **Phase 6** | Activity Engine + Stille-Matrix | Perfektes Timing. Stoert nie. |
 | **Phase 7** | Daily Summarizer + Langzeitgedaechtnis | MindHome Assistant kennt dich wirklich. Monatelange Erinnerung. |
 
 ---
 
-> Phase 1 und 2 sind implementiert. Phase 1 ist das Fundament,
-> Phase 2 gibt MindHome Assistant ein Gedaechtnis. Alles weitere
-> sind Verbesserungen die Stueck fuer Stueck aktiviert werden.
+> Phase 1, 2 und 4 sind implementiert. Phase 1 ist das Fundament,
+> Phase 2 gibt MindHome Assistant ein Gedaechtnis, Phase 4 ermoeglicht
+> komplexe Multi-Step Aktionen. Alles weitere sind Verbesserungen
+> die Stueck fuer Stueck aktiviert werden.
 > Jede Phase macht MindHome Assistant merkbar besser.
 
 ---

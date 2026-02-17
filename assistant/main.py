@@ -31,7 +31,7 @@ brain = AssistantBrain()
 async def lifespan(app: FastAPI):
     """Startup und Shutdown."""
     logger.info("=" * 50)
-    logger.info(" MindHome Assistant v0.2.0 startet...")
+    logger.info(" MindHome Assistant v0.3.0 startet...")
     logger.info("=" * 50)
     await brain.initialize()
 
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MindHome Assistant",
     description="Lokaler KI-Sprachassistent fuer Home Assistant",
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
@@ -182,6 +182,17 @@ async def memory_stats():
     }
 
 
+# ----- Action Planner Endpoints (Phase 4) -----
+
+@app.get("/api/assistant/planner/last")
+async def get_last_plan():
+    """Gibt den letzten ausgefuehrten Aktionsplan zurueck."""
+    plan = brain.action_planner.get_last_plan()
+    if not plan:
+        return {"plan": None, "message": "Kein Plan ausgefuehrt"}
+    return {"plan": plan}
+
+
 @app.get("/api/assistant/settings")
 async def get_settings():
     """Aktuelle Einstellungen."""
@@ -266,7 +277,7 @@ async def root():
     """Startseite."""
     return {
         "name": "MindHome Assistant",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "status": "running",
         "docs": "/docs",
     }
