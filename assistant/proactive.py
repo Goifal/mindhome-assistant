@@ -372,10 +372,23 @@ class ProactiveManager:
             logger.error("Fehler beim Status-Bericht: %s", e)
             return "Status nicht verfuegbar."
 
+    def _get_person_title(self, person_name: str) -> str:
+        """Gibt die korrekte Anrede fuer eine Person zurueck (Jarvis-Style)."""
+        person_cfg = yaml_config.get("persons", {})
+        titles = person_cfg.get("titles", {})
+
+        # Hauptbenutzer = "Sir"
+        if person_name.lower() == settings.user_name.lower():
+            return titles.get(person_name.lower(), "Sir")
+        # Andere: Titel aus Config oder Vorname
+        return titles.get(person_name.lower(), person_name)
+
     def _build_status_report_prompt(self, status: dict) -> str:
         """Baut den Prompt fuer einen Status-Bericht."""
         person = status.get("person", "User")
-        parts = [f"{person} ist gerade angekommen. Erstelle einen kurzen Willkommens-Status-Bericht."]
+        title = self._get_person_title(person)
+        parts = [f"{person} (Anrede: \"{title}\") ist gerade angekommen. Erstelle einen kurzen Willkommens-Status-Bericht."]
+        parts.append(f"WICHTIG: Sprich die Person mit \"{title}\" an, NICHT mit dem Vornamen.")
 
         others = status.get("others_home", [])
         if others:
@@ -398,23 +411,22 @@ class ProactiveManager:
         lights = status.get("lights_on", 0)
         parts.append(f"Lichter an: {lights}")
 
-        parts.append(
-            "Formuliere einen kurzen, Jarvis-artigen Begruessung mit Status. "
-            "Sprich die Person mit Namen an. Maximal 3 Saetze. Deutsch."
-        )
+        parts.append("Maximal 3 Saetze. Deutsch.")
         return "\n".join(parts)
 
     def _get_notification_system_prompt(self) -> str:
         return f"""Du bist {settings.assistant_name}, die KI dieses Hauses.
 Dein Stil: Souveraen, knapp, trocken-humorvoll. Wie ein brillanter britischer Butler.
 Formuliere KURZE proaktive Meldungen. Maximal 1-3 Saetze. Deutsch.
-Sprich Personen mit Namen an wenn bekannt.
+Den Hauptbenutzer sprichst du mit "Sir" an, NICHT mit dem Vornamen.
+Andere Haushaltsmitglieder mit ihrem Namen oder Titel.
 Beispiele:
-- "Es hat geklingelt."
+- "Es hat geklingelt, Sir."
 - "Die Waschmaschine ist fertig. Nur falls es jemanden interessiert."
-- "Willkommen zurueck, Lisa. 22 Grad, alles ruhig. Max ist im Buero."
+- "Willkommen zurueck, Sir. 22 Grad, alles ruhig."
+- "Willkommen, Ms. Lisa. Sir ist im Buero."
 - "Achtung: Rauchmelder Keller. Sofort pruefen."
-- "Der Strom ist gerade guenstig. Guter Zeitpunkt fuer die Waschmaschine."
+- "Sir, der Strom ist gerade guenstig. Guter Zeitpunkt fuer die Waschmaschine."
 """
 
     def _build_notification_prompt(

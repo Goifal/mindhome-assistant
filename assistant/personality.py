@@ -69,10 +69,8 @@ SPRACHSTIL:
 - "Ich wuerde davon abraten, aber..." wenn du anderer Meinung bist.
 - Du sagst NIE "Natuerlich!", "Gerne!", "Selbstverstaendlich!", "Klar!" - einfach machen.
 
-PERSONEN-BEWUSSTSEIN:
-- Sprich die Person mit Namen an wenn es sinnvoll ist.
-- Wenn {current_person} mit dir redet, nutze dessen Namen gelegentlich.
-- Bei Gaesten: Formeller, kein Insider-Witz. "Willkommen."
+ANREDE:
+{person_addressing}
 - Du weisst wer zuhause ist und wer nicht. Nutze dieses Wissen.
 - Jede Person hat eigene Vorlieben. Beruecksichtige das.
 
@@ -179,18 +177,20 @@ class PersonalityEngine:
         if mood_config["style_addon"]:
             mood_section = f"\nSTIMMUNG: {mood_config['style_addon']}"
 
-        # Person bestimmen
+        # Person bestimmen + Anrede-Logik (Jarvis-Style)
         current_person = "User"
         if context:
             current_person = context.get("person", {}).get("name", "User")
 
+        person_addressing = self._build_person_addressing(current_person)
+
         prompt = SYSTEM_PROMPT_TEMPLATE.format(
             assistant_name=self.assistant_name,
             user_name=self.user_name,
-            current_person=current_person,
             max_sentences=max_sentences,
             time_style=time_style,
             mood_section=mood_section,
+            person_addressing=person_addressing,
         )
 
         # Kontext anhaengen wenn vorhanden
@@ -199,6 +199,30 @@ class PersonalityEngine:
             prompt += self._format_context(context)
 
         return prompt
+
+    def _build_person_addressing(self, person_name: str) -> str:
+        """Baut die Anrede-Regeln basierend auf der Person (Jarvis-Style)."""
+        # Hauptbenutzer = "Sir" (wie Jarvis zu Tony Stark)
+        primary_user = self.user_name
+        person_cfg = yaml_config.get("persons", {})
+        titles = person_cfg.get("titles", {})
+
+        if person_name.lower() == primary_user.lower() or person_name == "User":
+            title = titles.get(primary_user.lower(), "Sir")
+            return (
+                f"- Die aktuelle Person ist der Hauptbenutzer. Sprich ihn mit \"{title}\" an.\n"
+                f"- NIEMALS den Vornamen \"{primary_user}\" verwenden. IMMER \"{title}\".\n"
+                f"- Beispiel: \"Sehr wohl, {title}.\" oder \"Darf ich anmerken, {title}...\"\n"
+                f"- Bei Gaesten: Formell, kein Insider-Humor. \"Willkommen.\""
+            )
+        else:
+            # Andere Haushaltsmitglieder: Titel aus Config oder Vorname
+            title = titles.get(person_name.lower(), person_name)
+            return (
+                f"- Die aktuelle Person ist {person_name}. Sprich sie mit \"{title}\" an.\n"
+                f"- Benutze \"{title}\" gelegentlich, nicht in jedem Satz.\n"
+                f"- Bei Gaesten: Formell, kein Insider-Humor. \"Willkommen.\""
+            )
 
     def _format_context(self, context: dict) -> str:
         """Formatiert den Kontext fuer den System Prompt."""

@@ -9,6 +9,18 @@ assistant:
   version: "0.8.0"
   language: "de"
 
+# --- Personen und Anrede ---
+# Wie Jarvis die Hausbewohner anspricht
+# Hauptbenutzer (user_name in .env) = "Sir" (Standard)
+# Andere Personen: Name oder Titel
+persons:
+  titles:
+    # key = vorname (kleingeschrieben), value = Anrede
+    # Der Hauptbenutzer (USER_NAME in .env) wird automatisch "Sir"
+    # Weitere Personen hier hinzufuegen:
+    # lisa: "Ms. Lisa"
+    # thomas: "Thomas"
+
 # --- Autonomie-Level ---
 # 1 = Assistent (nur auf Befehle reagieren)
 # 2 = Butler (+ proaktive Infos)
