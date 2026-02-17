@@ -31,7 +31,7 @@ brain = AssistantBrain()
 async def lifespan(app: FastAPI):
     """Startup und Shutdown."""
     logger.info("=" * 50)
-    logger.info(" MindHome Assistant v0.6.0 startet...")
+    logger.info(" MindHome Assistant v0.7.0 startet...")
     logger.info("=" * 50)
     await brain.initialize()
 
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MindHome Assistant",
     description="Lokaler KI-Sprachassistent fuer Home Assistant",
-    version="0.6.0",
+    version="0.7.0",
     lifespan=lifespan,
 )
 
@@ -232,6 +232,14 @@ async def feedback_scores():
     """Alle Feedback-Scores auf einen Blick."""
     scores = await brain.feedback.get_all_scores()
     return {"scores": scores, "total_types": len(scores)}
+
+
+# ----- Mood Detector Endpoints (Phase 3) -----
+
+@app.get("/api/assistant/mood")
+async def get_mood():
+    """Aktuelle Stimmungserkennung des Benutzers."""
+    return brain.mood.get_current_mood()
 
 
 # ----- Activity Engine Endpoints (Phase 6) -----

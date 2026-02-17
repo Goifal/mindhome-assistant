@@ -1,6 +1,10 @@
 """
 Personality Engine - Definiert wie der Assistent redet und sich verhaelt.
 Passt sich an Tageszeit, Situation und Stimmung an.
+
+Phase 3: Stimmungsabhaengige Anpassung des Verhaltens.
+Der Assistent erkennt Stress, Frustration und Muedigkeit und passt
+seinen Ton, seine Antwortlaenge und seinen Humor entsprechend an.
 """
 
 import logging
@@ -10,6 +14,32 @@ from typing import Optional
 from .config import settings, yaml_config
 
 logger = logging.getLogger(__name__)
+
+# Stimmungsabhaengige Stil-Anpassungen
+MOOD_STYLES = {
+    "good": {
+        "style_addon": "User ist gut drauf. Etwas mehr Humor, locker bleiben.",
+        "max_sentences_mod": 1,  # +1 Satz erlaubt
+    },
+    "neutral": {
+        "style_addon": "",
+        "max_sentences_mod": 0,
+    },
+    "stressed": {
+        "style_addon": "User ist gestresst. Extrem knapp antworten. Keine Rueckfragen. Einfach machen.",
+        "max_sentences_mod": -1,  # 1 Satz weniger
+    },
+    "frustrated": {
+        "style_addon": "User ist frustriert. Nicht rechtfertigen. Sofort handeln. "
+                       "Wenn etwas nicht geklappt hat, kurz sagen was du stattdessen tust. Kein Humor.",
+        "max_sentences_mod": 0,
+    },
+    "tired": {
+        "style_addon": "User ist muede. Minimal antworten. Kein Humor. "
+                       "Nur das Noetigste. Leise, ruhig.",
+        "max_sentences_mod": -1,
+    },
+}
 
 
 SYSTEM_PROMPT_TEMPLATE = """Du bist {assistant_name}, der Haus-Assistent fuer {user_name}.
@@ -39,7 +69,7 @@ REGELN:
 - Kein "Natuerlich!", "Gerne!", "Selbstverstaendlich!" - einfach machen.
 
 AKTUELLER STIL: {time_style}
-
+{mood_section}
 KONTEXT-NUTZUNG:
 - "Hier" = der Raum in dem der User ist (aus Presence-Daten).
 - "Zu kalt/warm" = Problem, nicht Zielwert. Nutze die bekannte Praeferenz oder +/- 2 Grad.
@@ -58,13 +88,19 @@ FUNCTION CALLING:
 
 
 class PersonalityEngine:
-    """Baut den System Prompt basierend auf Kontext."""
+    """Baut den System Prompt basierend auf Kontext und Stimmung."""
 
     def __init__(self):
         self.user_name = settings.user_name
         self.assistant_name = settings.assistant_name
         personality_config = yaml_config.get("personality", {})
         self.time_layers = personality_config.get("time_layers", {})
+        self._current_mood: str = "neutral"
+        self._mood_detector = None
+
+    def set_mood_detector(self, mood_detector):
+        """Setzt die Referenz zum MoodDetector (Phase 3)."""
+        self._mood_detector = mood_detector
 
     def get_time_of_day(self, hour: Optional[int] = None) -> str:
         """Bestimmt die aktuelle Tageszeit-Kategorie."""
@@ -112,11 +148,25 @@ class PersonalityEngine:
         time_style = self.get_time_style(time_of_day)
         max_sentences = self.get_max_sentences(time_of_day)
 
+        # Phase 3: Stimmungsabhaengige Anpassung
+        mood = context.get("mood", {}).get("mood", "neutral") if context else "neutral"
+        self._current_mood = mood
+        mood_config = MOOD_STYLES.get(mood, MOOD_STYLES["neutral"])
+
+        # Max Sentences anpassen (nie unter 1)
+        max_sentences = max(1, max_sentences + mood_config["max_sentences_mod"])
+
+        # Mood-Abschnitt fuer den Prompt
+        mood_section = ""
+        if mood_config["style_addon"]:
+            mood_section = f"\nSTIMMUNG: {mood_config['style_addon']}"
+
         prompt = SYSTEM_PROMPT_TEMPLATE.format(
             assistant_name=self.assistant_name,
             user_name=self.user_name,
             max_sentences=max_sentences,
             time_style=time_style,
+            mood_section=mood_section,
         )
 
         # Kontext anhaengen wenn vorhanden
@@ -178,5 +228,18 @@ class PersonalityEngine:
         if "alerts" in context and context["alerts"]:
             for alert in context["alerts"]:
                 lines.append(f"- WARNUNG: {alert}")
+
+        # Stimmungs-Kontext (Phase 3)
+        if "mood" in context:
+            m = context["mood"]
+            mood = m.get("mood", "neutral")
+            stress = m.get("stress_level", 0)
+            tiredness = m.get("tiredness_level", 0)
+            if mood != "neutral" or stress > 0.3 or tiredness > 0.3:
+                lines.append(f"- User-Stimmung: {mood}")
+                if stress > 0.3:
+                    lines.append(f"- Stress-Level: {stress:.0%}")
+                if tiredness > 0.3:
+                    lines.append(f"- Muedigkeit: {tiredness:.0%}")
 
         return "\n".join(lines)

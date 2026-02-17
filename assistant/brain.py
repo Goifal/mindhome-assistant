@@ -21,6 +21,7 @@ from .ha_client import HomeAssistantClient
 from .memory import MemoryManager
 from .memory_extractor import MemoryExtractor
 from .model_router import ModelRouter
+from .mood_detector import MoodDetector
 from .ollama_client import OllamaClient
 from .personality import PersonalityEngine
 from .proactive import ProactiveManager
@@ -51,6 +52,7 @@ class AssistantBrain:
         self.proactive = ProactiveManager(self)
         self.summarizer = DailySummarizer(self.ollama)
         self.memory_extractor: Optional[MemoryExtractor] = None
+        self.mood = MoodDetector()
         self.action_planner = ActionPlanner(self.ollama, self.executor, self.validator)
 
     async def initialize(self):
@@ -62,6 +64,10 @@ class AssistantBrain:
 
         # Activity Engine mit Context Builder verbinden (Phase 6)
         self.context_builder.set_activity_engine(self.activity)
+
+        # Mood Detector initialisieren (Phase 3)
+        await self.mood.initialize(redis_client=self.memory.redis)
+        self.personality.set_mood_detector(self.mood)
 
         # Memory Extractor initialisieren
         self.memory_extractor = MemoryExtractor(self.ollama, self.memory.semantic)
@@ -77,7 +83,7 @@ class AssistantBrain:
         )
 
         await self.proactive.start()
-        logger.info("MindHome Assistant Brain initialisiert (alle Phasen aktiv)")
+        logger.info("MindHome Assistant Brain initialisiert (Phase 1-7 + Mood Detection aktiv)")
 
     async def process(self, text: str, person: Optional[str] = None) -> dict:
         """
@@ -102,10 +108,14 @@ class AssistantBrain:
         if person:
             context.setdefault("person", {})["name"] = person
 
-        # 2. Modell waehlen
+        # 2. Stimmungsanalyse (Phase 3)
+        mood_result = await self.mood.analyze(text, person or "")
+        context["mood"] = mood_result
+
+        # 3. Modell waehlen
         model = self.model_router.select_model(text)
 
-        # 3. System Prompt bauen (mit semantischen Erinnerungen)
+        # 4. System Prompt bauen (mit semantischen Erinnerungen + Stimmung)
         system_prompt = self.personality.build_system_prompt(context)
 
         # Semantische Erinnerungen zum System Prompt hinzufuegen
@@ -119,14 +129,14 @@ class AssistantBrain:
         if summary_context:
             system_prompt += summary_context
 
-        # 4. Letzte Gespraeche laden (Working Memory)
+        # 5. Letzte Gespraeche laden (Working Memory)
         recent = await self.memory.get_recent_conversations(limit=5)
         messages = [{"role": "system", "content": system_prompt}]
         for conv in recent:
             messages.append({"role": conv["role"], "content": conv["content"]})
         messages.append({"role": "user", "content": text})
 
-        # 5. Komplexe Anfragen ueber Action Planner routen
+        # 6. Komplexe Anfragen ueber Action Planner routen
         if self.action_planner.is_complex_request(text):
             logger.info("Komplexe Anfrage erkannt -> Action Planner")
             planner_result = await self.action_planner.plan_and_execute(
@@ -139,7 +149,7 @@ class AssistantBrain:
             executed_actions = planner_result.get("actions", [])
             model = "qwen2.5:14b"  # Planner nutzt immer smart model
         else:
-            # 5b. Einfache Anfragen: Direkt LLM aufrufen
+            # 6b. Einfache Anfragen: Direkt LLM aufrufen
             response = await self.ollama.chat(
                 messages=messages,
                 model=model,
@@ -155,13 +165,13 @@ class AssistantBrain:
                     "error": response["error"],
                 }
 
-            # 6. Antwort verarbeiten
+            # 7. Antwort verarbeiten
             message = response.get("message", {})
             response_text = message.get("content", "")
             tool_calls = message.get("tool_calls", [])
             executed_actions = []
 
-            # 7. Function Calls ausfuehren
+            # 8. Function Calls ausfuehren
             if tool_calls:
                 for tool_call in tool_calls:
                     func = tool_call.get("function", {})
@@ -262,6 +272,7 @@ class AssistantBrain:
                 "chromadb": "connected" if self.memory.chroma_collection else "disconnected",
                 "semantic_memory": "connected" if self.memory.semantic.chroma_collection else "disconnected",
                 "memory_extractor": "active" if self.memory_extractor else "inactive",
+                "mood_detector": f"active (mood: {self.mood.get_current_mood()['mood']})",
                 "action_planner": "active",
                 "feedback_tracker": "running" if self.feedback._running else "stopped",
                 "activity_engine": "active",

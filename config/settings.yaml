@@ -6,7 +6,7 @@ assistant:
   # Name des Assistenten - so stellt er sich vor und so reagiert er
   # Aendere diesen Namen zu was du willst (z.B. "Jarvis", "Alfred", "Nova")
   name: "MindHome Assistant"
-  version: "0.6.0"
+  version: "0.7.0"
   language: "de"
 
 # --- Autonomie-Level ---
@@ -131,6 +131,18 @@ planner:
     - "party"
     - "besuch kommt"
     - "gaeste"
+
+# --- Mood Detector (Phase 3) ---
+mood:
+  # Sekunden zwischen Befehlen = "schnelle Befehle" (Stress-Signal)
+  rapid_command_seconds: 5
+  # Wie schnell Stress abklingt (in Sekunden fuer vollen Abbau)
+  stress_decay_seconds: 300
+  # Ab wie vielen negativen Signalen = "frustriert"
+  frustration_threshold: 3
+  # Ab welcher Uhrzeit gilt "spaet" (muede-Erkennung)
+  tired_hour_start: 23
+  tired_hour_end: 5
 
 # --- Activity Engine + Silence Matrix (Phase 6) ---
 activity:
