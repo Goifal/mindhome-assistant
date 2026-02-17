@@ -31,7 +31,7 @@ brain = AssistantBrain()
 async def lifespan(app: FastAPI):
     """Startup und Shutdown."""
     logger.info("=" * 50)
-    logger.info(" MindHome Assistant v0.7.0 startet...")
+    logger.info(" MindHome Assistant v0.8.0 startet...")
     logger.info("=" * 50)
     await brain.initialize()
 
@@ -240,6 +240,15 @@ async def feedback_scores():
 async def get_mood():
     """Aktuelle Stimmungserkennung des Benutzers."""
     return brain.mood.get_current_mood()
+
+
+# ----- Status Report Endpoint -----
+
+@app.get("/api/assistant/status")
+async def get_status_report(person: Optional[str] = None):
+    """Generiert einen Jarvis-artigen Status-Bericht."""
+    report = await brain.proactive.generate_status_report(person or settings.user_name)
+    return {"report": report, "person": person or settings.user_name}
 
 
 # ----- Activity Engine Endpoints (Phase 6) -----

@@ -65,6 +65,7 @@ class ProactiveManager:
             # LOW - Melden wenn entspannt
             "energy_price_low": (LOW, "Strom ist guenstig"),
             "weather_warning": (LOW, "Wetterwarnung"),
+            "window_open_rain": (LOW, "Fenster offen bei Regen"),
         }
 
     async def start(self):
@@ -195,8 +196,11 @@ class ProactiveManager:
         elif entity_id.startswith("person."):
             name = new_state.get("attributes", {}).get("friendly_name", entity_id)
             if new_val == "home" and old_val != "home":
+                # Status-Bericht bei Ankunft generieren
+                status = await self._build_arrival_status(name)
                 await self._notify("person_arrived", MEDIUM, {
                     "person": name,
+                    "status_report": status,
                 })
             elif old_val == "home" and new_val != "home":
                 await self._notify("person_left", MEDIUM, {
@@ -293,14 +297,124 @@ class ProactiveManager:
         except Exception as e:
             logger.error("Fehler bei proaktiver Meldung: %s", e)
 
+    async def _build_arrival_status(self, person_name: str) -> dict:
+        """Baut einen Status-Bericht fuer eine ankommende Person."""
+        status = {"person": person_name}
+        try:
+            # Haus-Status sammeln
+            states = await self.brain.ha.get_states()
+            if not states:
+                return status
+
+            # Wer ist noch zuhause?
+            others_home = []
+            for s in states:
+                if s.get("entity_id", "").startswith("person."):
+                    pname = s.get("attributes", {}).get("friendly_name", "")
+                    if s.get("state") == "home" and pname.lower() != person_name.lower():
+                        others_home.append(pname)
+            status["others_home"] = others_home
+
+            # Temperatur
+            for s in states:
+                if s.get("entity_id", "").startswith("climate."):
+                    attrs = s.get("attributes", {})
+                    status["temperature"] = attrs.get("current_temperature")
+                    break
+
+            # Wetter
+            for s in states:
+                if s.get("entity_id", "").startswith("weather."):
+                    attrs = s.get("attributes", {})
+                    status["weather"] = {
+                        "temp": attrs.get("temperature"),
+                        "condition": s.get("state"),
+                    }
+                    break
+
+            # Offene Fenster/Tueren
+            open_items = []
+            for s in states:
+                eid = s.get("entity_id", "")
+                if ("window" in eid or "door" in eid) and s.get("state") == "on":
+                    name = s.get("attributes", {}).get("friendly_name", eid)
+                    open_items.append(name)
+            if open_items:
+                status["open_items"] = open_items
+
+            # Aktive Lichter
+            lights_on = sum(
+                1 for s in states
+                if s.get("entity_id", "").startswith("light.") and s.get("state") == "on"
+            )
+            status["lights_on"] = lights_on
+
+        except Exception as e:
+            logger.debug("Fehler beim Status-Bericht: %s", e)
+
+        return status
+
+    async def generate_status_report(self, person_name: str = "") -> str:
+        """Generiert einen Jarvis-artigen Status-Bericht (kann auch manuell aufgerufen werden)."""
+        status = await self._build_arrival_status(person_name or "User")
+        prompt = self._build_status_report_prompt(status)
+
+        try:
+            response = await self.brain.ollama.chat(
+                messages=[
+                    {"role": "system", "content": self._get_notification_system_prompt()},
+                    {"role": "user", "content": prompt},
+                ],
+                model=settings.model_fast,
+            )
+            return response.get("message", {}).get("content", "Alles in Ordnung.")
+        except Exception as e:
+            logger.error("Fehler beim Status-Bericht: %s", e)
+            return "Status nicht verfuegbar."
+
+    def _build_status_report_prompt(self, status: dict) -> str:
+        """Baut den Prompt fuer einen Status-Bericht."""
+        person = status.get("person", "User")
+        parts = [f"{person} ist gerade angekommen. Erstelle einen kurzen Willkommens-Status-Bericht."]
+
+        others = status.get("others_home", [])
+        if others:
+            parts.append(f"Ebenfalls zuhause: {', '.join(others)}")
+        else:
+            parts.append("Niemand sonst ist zuhause.")
+
+        temp = status.get("temperature")
+        if temp:
+            parts.append(f"Innentemperatur: {temp}°C")
+
+        weather = status.get("weather", {})
+        if weather:
+            parts.append(f"Wetter: {weather.get('temp', '?')}°C, {weather.get('condition', '?')}")
+
+        open_items = status.get("open_items", [])
+        if open_items:
+            parts.append(f"Offen: {', '.join(open_items)}")
+
+        lights = status.get("lights_on", 0)
+        parts.append(f"Lichter an: {lights}")
+
+        parts.append(
+            "Formuliere einen kurzen, Jarvis-artigen Begruessung mit Status. "
+            "Sprich die Person mit Namen an. Maximal 3 Saetze. Deutsch."
+        )
+        return "\n".join(parts)
+
     def _get_notification_system_prompt(self) -> str:
-        return """Du bist der MindHome Assistant. Formuliere eine KURZE proaktive Meldung.
-Maximal 1-2 Saetze. Direkt, keine Floskeln. Deutsch.
+        return f"""Du bist {settings.assistant_name}, die KI dieses Hauses.
+Dein Stil: Souveraen, knapp, trocken-humorvoll. Wie ein brillanter britischer Butler.
+Formuliere KURZE proaktive Meldungen. Maximal 1-3 Saetze. Deutsch.
+Sprich Personen mit Namen an wenn bekannt.
 Beispiele:
-- "Jemand hat geklingelt."
-- "Waschmaschine ist fertig."
-- "Lisa ist gerade angekommen."
-- "Achtung: Rauch im Keller erkannt!"
+- "Es hat geklingelt."
+- "Die Waschmaschine ist fertig. Nur falls es jemanden interessiert."
+- "Willkommen zurueck, Lisa. 22 Grad, alles ruhig. Max ist im Buero."
+- "Achtung: Rauchmelder Keller. Sofort pruefen."
+- "Der Strom ist gerade guenstig. Guter Zeitpunkt fuer die Waschmaschine."
 """
 
     def _build_notification_prompt(
@@ -312,8 +426,13 @@ Beispiele:
             parts.append(f"Person: {data['person']}")
         if "entity" in data:
             parts.append(f"Entity: {data['entity']}")
+        if "status_report" in data:
+            status = data["status_report"]
+            return self._build_status_report_prompt(status)
 
         parts.append(f"Dringlichkeit: {urgency}")
-        parts.append("Formuliere eine kurze Meldung fuer den Bewohner.")
+
+        # Wer ist gerade zuhause?
+        parts.append("Formuliere eine kurze Meldung. Sprich die Bewohner mit Namen an wenn passend.")
 
         return "\n".join(parts)

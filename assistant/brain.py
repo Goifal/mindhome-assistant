@@ -83,7 +83,7 @@ class AssistantBrain:
         )
 
         await self.proactive.start()
-        logger.info("MindHome Assistant Brain initialisiert (Phase 1-7 + Mood Detection aktiv)")
+        logger.info("Jarvis initialisiert (alle Systeme aktiv)")
 
     async def process(self, text: str, person: Optional[str] = None) -> dict:
         """
