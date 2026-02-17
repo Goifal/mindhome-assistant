@@ -74,12 +74,8 @@ app = FastAPI(
 # CORS Policy - nur HA und lokales Netzwerk
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.ha_url,
-        "http://localhost:*",
-        "http://127.0.0.1:*",
-        "http://192.168.*",
-    ],
+    allow_origins=[settings.ha_url],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT"],
     allow_headers=["*"],
