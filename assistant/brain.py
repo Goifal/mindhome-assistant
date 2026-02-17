@@ -10,6 +10,7 @@ import logging
 from typing import Optional
 
 from .action_planner import ActionPlanner
+from .activity import ActivityEngine
 from .autonomy import AutonomyManager
 from .config import settings
 from .context_builder import ContextBuilder
@@ -45,6 +46,7 @@ class AssistantBrain:
         self.memory = MemoryManager()
         self.autonomy = AutonomyManager()
         self.feedback = FeedbackTracker()
+        self.activity = ActivityEngine(self.ha)
         self.proactive = ProactiveManager(self)
         self.memory_extractor: Optional[MemoryExtractor] = None
         self.action_planner = ActionPlanner(self.ollama, self.executor, self.validator)
@@ -56,6 +58,9 @@ class AssistantBrain:
         # Semantic Memory mit Context Builder verbinden
         self.context_builder.set_semantic_memory(self.memory.semantic)
 
+        # Activity Engine mit Context Builder verbinden (Phase 6)
+        self.context_builder.set_activity_engine(self.activity)
+
         # Memory Extractor initialisieren
         self.memory_extractor = MemoryExtractor(self.ollama, self.memory.semantic)
 
@@ -63,7 +68,7 @@ class AssistantBrain:
         await self.feedback.initialize(redis_client=self.memory.redis)
 
         await self.proactive.start()
-        logger.info("MindHome Assistant Brain initialisiert (inkl. Semantic Memory + Feedback)")
+        logger.info("MindHome Assistant Brain initialisiert (inkl. Feedback + Activity Engine)")
 
     async def process(self, text: str, person: Optional[str] = None) -> dict:
         """
@@ -245,6 +250,7 @@ class AssistantBrain:
                 "memory_extractor": "active" if self.memory_extractor else "inactive",
                 "action_planner": "active",
                 "feedback_tracker": "running" if self.feedback._running else "stopped",
+                "activity_engine": "active",
                 "proactive": "running" if self.proactive._running else "stopped",
             },
             "models_available": models,

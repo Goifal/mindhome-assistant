@@ -246,12 +246,16 @@ class ProactiveManager:
                 if datetime.now() - last_dt < timedelta(seconds=effective_cooldown):
                     return
 
-        # Aktive Stille-Szene pruefen
-        if urgency != CRITICAL:
-            context = await self.brain.context_builder.build()
-            active_scenes = context.get("house", {}).get("active_scenes", [])
-            if any(s.lower() in self.silence_scenes for s in active_scenes):
-                return
+        # Phase 6: Activity Engine + Silence Matrix
+        activity_result = await self.brain.activity.should_deliver(urgency)
+        if activity_result["suppress"]:
+            logger.info(
+                "Meldung unterdrueckt [%s]: Aktivitaet=%s, Delivery=%s",
+                event_type, activity_result["activity"], activity_result["delivery"],
+            )
+            return
+
+        delivery_method = activity_result["delivery"]
 
         # Notification-ID generieren (fuer Feedback-Tracking)
         notification_id = f"notif_{uuid.uuid4().hex[:12]}"
@@ -271,7 +275,7 @@ class ProactiveManager:
 
             text = response.get("message", {}).get("content", description)
 
-            # WebSocket: Proaktive Meldung senden (mit Notification-ID)
+            # WebSocket: Proaktive Meldung senden (mit Notification-ID + Delivery)
             await emit_proactive(text, event_type, urgency, notification_id)
 
             # Cooldown setzen
@@ -281,8 +285,9 @@ class ProactiveManager:
             await feedback.track_notification(notification_id, event_type)
 
             logger.info(
-                "Proaktive Meldung [%s/%s] (id: %s): %s",
-                event_type, urgency, notification_id, text,
+                "Proaktive Meldung [%s/%s] (id: %s, delivery: %s, activity: %s): %s",
+                event_type, urgency, notification_id, delivery_method,
+                activity_result["activity"], text,
             )
 
         except Exception as e:
