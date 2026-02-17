@@ -13,6 +13,7 @@ from .action_planner import ActionPlanner
 from .autonomy import AutonomyManager
 from .config import settings
 from .context_builder import ContextBuilder
+from .feedback import FeedbackTracker
 from .function_calling import ASSISTANT_TOOLS, FunctionExecutor
 from .function_validator import FunctionValidator
 from .ha_client import HomeAssistantClient
@@ -43,6 +44,7 @@ class AssistantBrain:
         self.validator = FunctionValidator()
         self.memory = MemoryManager()
         self.autonomy = AutonomyManager()
+        self.feedback = FeedbackTracker()
         self.proactive = ProactiveManager(self)
         self.memory_extractor: Optional[MemoryExtractor] = None
         self.action_planner = ActionPlanner(self.ollama, self.executor, self.validator)
@@ -57,8 +59,11 @@ class AssistantBrain:
         # Memory Extractor initialisieren
         self.memory_extractor = MemoryExtractor(self.ollama, self.memory.semantic)
 
+        # Feedback Tracker initialisieren (Phase 5)
+        await self.feedback.initialize(redis_client=self.memory.redis)
+
         await self.proactive.start()
-        logger.info("MindHome Assistant Brain initialisiert (inkl. Semantic Memory)")
+        logger.info("MindHome Assistant Brain initialisiert (inkl. Semantic Memory + Feedback)")
 
     async def process(self, text: str, person: Optional[str] = None) -> dict:
         """
@@ -239,6 +244,7 @@ class AssistantBrain:
                 "semantic_memory": "connected" if self.memory.semantic.chroma_collection else "disconnected",
                 "memory_extractor": "active" if self.memory_extractor else "inactive",
                 "action_planner": "active",
+                "feedback_tracker": "running" if self.feedback._running else "stopped",
                 "proactive": "running" if self.proactive._running else "stopped",
             },
             "models_available": models,
@@ -293,5 +299,6 @@ class AssistantBrain:
     async def shutdown(self):
         """Faehrt MindHome Assistant herunter."""
         await self.proactive.stop()
+        await self.feedback.stop()
         await self.memory.close()
         logger.info("MindHome Assistant heruntergefahren")

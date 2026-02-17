@@ -164,21 +164,27 @@ class MemoryManager:
         )
 
     # ----- Feedback Scores -----
+    # HINWEIS: Feedback-Logik ist seit Phase 5 im FeedbackTracker (feedback.py).
+    # Diese Methoden bleiben als Kompatibilitaets-Brücke erhalten.
 
     async def get_feedback_score(self, event_type: str) -> float:
         """Holt den Feedback-Score fuer einen Event-Typ."""
         if not self.redis:
             return 0.5
-        score = await self.redis.get(f"mha:feedback:{event_type}")
+        # Phase 5: Neues Key-Schema
+        score = await self.redis.get(f"mha:feedback:score:{event_type}")
+        if score is None:
+            # Fallback: altes Key-Schema
+            score = await self.redis.get(f"mha:feedback:{event_type}")
         return float(score) if score else 0.5
 
     async def update_feedback_score(self, event_type: str, delta: float):
-        """Aktualisiert den Feedback-Score."""
+        """Aktualisiert den Feedback-Score (Legacy-Kompatibilitaet)."""
         if not self.redis:
             return
         current = await self.get_feedback_score(event_type)
         new_score = max(0.0, min(1.0, current + delta))
-        await self.redis.set(f"mha:feedback:{event_type}", str(new_score))
+        await self.redis.set(f"mha:feedback:score:{event_type}", str(new_score))
 
     async def close(self):
         """Schliesst Verbindungen."""

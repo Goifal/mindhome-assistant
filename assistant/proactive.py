@@ -3,13 +3,16 @@ Proactive Manager - Der MindHome Assistant spricht von sich aus.
 Hoert auf Events von Home Assistant / MindHome und entscheidet ob
 eine proaktive Meldung sinnvoll ist.
 
-FIX: self.brain.autonomy.current_level -> self.brain.autonomy.level
-     (Property heisst 'level' in AutonomyManager, nicht 'current_level')
+Phase 5: Vollstaendig mit FeedbackTracker integriert.
+- Adaptive Cooldowns basierend auf Feedback-Score
+- Auto-Timeout fuer unbeantwortete Meldungen
+- Intelligente Filterung pro Event-Typ und Urgency
 """
 
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -72,7 +75,7 @@ class ProactiveManager:
 
         self._running = True
         self._task = asyncio.create_task(self._listen_ha_events())
-        logger.info("Proactive Manager gestartet")
+        logger.info("Proactive Manager gestartet (mit Feedback-Integration)")
 
     async def stop(self):
         """Stoppt den Event Listener."""
@@ -221,19 +224,27 @@ class ProactiveManager:
             if level < 2:  # Level 1 = nur Befehle
                 return
 
-        # Cooldown pruefen
+        # Cooldown pruefen (mit adaptivem Cooldown aus Feedback)
+        effective_cooldown = self.cooldown
+        feedback = self.brain.feedback
+
         if urgency not in (CRITICAL, HIGH):
+            # Feedback-basierte Entscheidung
+            decision = await feedback.should_notify(event_type, urgency)
+            if not decision["allow"]:
+                logger.info(
+                    "Meldung unterdrueckt [%s]: %s", event_type, decision["reason"]
+                )
+                return
+            # Adaptiver Cooldown aus Feedback
+            effective_cooldown = decision.get("cooldown", self.cooldown)
+
+            # Cooldown pruefen
             last_time = await self.brain.memory.get_last_notification_time(event_type)
             if last_time:
                 last_dt = datetime.fromisoformat(last_time)
-                if datetime.now() - last_dt < timedelta(seconds=self.cooldown):
+                if datetime.now() - last_dt < timedelta(seconds=effective_cooldown):
                     return
-
-        # Feedback-Score pruefen (zu oft ignoriert?)
-        if urgency == LOW:
-            score = await self.brain.memory.get_feedback_score(event_type)
-            if score < 0.2:
-                return
 
         # Aktive Stille-Szene pruefen
         if urgency != CRITICAL:
@@ -241,6 +252,9 @@ class ProactiveManager:
             active_scenes = context.get("house", {}).get("active_scenes", [])
             if any(s.lower() in self.silence_scenes for s in active_scenes):
                 return
+
+        # Notification-ID generieren (fuer Feedback-Tracking)
+        notification_id = f"notif_{uuid.uuid4().hex[:12]}"
 
         # Meldung generieren
         description = self.event_handlers.get(event_type, (MEDIUM, event_type))[1]
@@ -257,13 +271,19 @@ class ProactiveManager:
 
             text = response.get("message", {}).get("content", description)
 
-            # WebSocket: Proaktive Meldung senden
-            await emit_proactive(text, event_type, urgency)
+            # WebSocket: Proaktive Meldung senden (mit Notification-ID)
+            await emit_proactive(text, event_type, urgency, notification_id)
 
             # Cooldown setzen
             await self.brain.memory.set_last_notification_time(event_type)
 
-            logger.info("Proaktive Meldung [%s/%s]: %s", event_type, urgency, text)
+            # Feedback-Tracker: Meldung registrieren (wartet auf Feedback)
+            await feedback.track_notification(notification_id, event_type)
+
+            logger.info(
+                "Proaktive Meldung [%s/%s] (id: %s): %s",
+                event_type, urgency, notification_id, text,
+            )
 
         except Exception as e:
             logger.error("Fehler bei proaktiver Meldung: %s", e)

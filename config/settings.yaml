@@ -6,7 +6,7 @@ assistant:
   # Name des Assistenten - so stellt er sich vor und so reagiert er
   # Aendere diesen Namen zu was du willst (z.B. "Jarvis", "Alfred", "Nova")
   name: "MindHome Assistant"
-  version: "0.3.0"
+  version: "0.4.0"
   language: "de"
 
 # --- Autonomie-Level ---
@@ -131,6 +131,18 @@ planner:
     - "party"
     - "besuch kommt"
     - "gaeste"
+
+# --- Feedback Loop (Phase 5) ---
+feedback:
+  # Auto-Timeout: Sekunden ohne Reaktion = "ignored"
+  auto_timeout_seconds: 120
+  # Basis-Cooldown in Sekunden (wird adaptiv angepasst)
+  base_cooldown_seconds: 300
+  # Score-Grenzen fuer Entscheidungen
+  score_suppress: 0.15    # Darunter: nicht mehr senden
+  score_reduce: 0.30      # Darunter: laengerer Cooldown
+  score_normal: 0.50      # Normaler Cooldown
+  score_boost: 0.70       # Darueber: kuerzerer Cooldown
 
 # --- Context Builder ---
 context:
