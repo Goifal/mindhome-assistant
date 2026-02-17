@@ -1,6 +1,6 @@
 """
 Memory Manager - Gedaechtnis des MindHome Assistants.
-Working Memory (Redis) + Episodic Memory (ChromaDB).
+Working Memory (Redis) + Episodic Memory (ChromaDB) + Semantic Memory (Fakten).
 """
 
 import json
@@ -11,20 +11,22 @@ from typing import Optional
 import redis.asyncio as redis
 
 from .config import settings
+from .semantic_memory import SemanticMemory
 
 logger = logging.getLogger(__name__)
 
 
 class MemoryManager:
-    """Verwaltet das Kurz- und Langzeitgedaechtnis des Assistenten."""
+    """Verwaltet das Kurz-, Langzeit- und semantische Gedaechtnis."""
 
     def __init__(self):
         self.redis: Optional[redis.Redis] = None
         self.chroma_collection = None
         self._chroma_client = None
+        self.semantic = SemanticMemory()
 
     async def initialize(self):
-        """Initialisiert Redis und ChromaDB Verbindungen."""
+        """Initialisiert Redis, ChromaDB und Semantic Memory."""
         # Redis (Working Memory)
         try:
             self.redis = redis.from_url(
@@ -52,6 +54,10 @@ class MemoryManager:
         except Exception as e:
             logger.warning("ChromaDB nicht verfuegbar: %s", e)
             self.chroma_collection = None
+
+        # Semantic Memory (Fakten-Gedaechtnis)
+        await self.semantic.initialize(redis_client=self.redis)
+        logger.info("Memory Manager initialisiert (Working + Episodic + Semantic)")
 
     # ----- Working Memory (Redis) -----
 

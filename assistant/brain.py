@@ -1,13 +1,15 @@
 """
 MindHome Assistant Brain - Das zentrale Gehirn.
 Verbindet alle Komponenten: Context Builder, Model Router, Personality,
-Function Calling, Memory und Autonomy.
+Function Calling, Memory, Autonomy, Memory Extractor und Action Planner.
 """
 
+import asyncio
 import json
 import logging
 from typing import Optional
 
+from .action_planner import ActionPlanner
 from .autonomy import AutonomyManager
 from .config import settings
 from .context_builder import ContextBuilder
@@ -15,6 +17,7 @@ from .function_calling import ASSISTANT_TOOLS, FunctionExecutor
 from .function_validator import FunctionValidator
 from .ha_client import HomeAssistantClient
 from .memory import MemoryManager
+from .memory_extractor import MemoryExtractor
 from .model_router import ModelRouter
 from .ollama_client import OllamaClient
 from .personality import PersonalityEngine
@@ -41,12 +44,21 @@ class AssistantBrain:
         self.memory = MemoryManager()
         self.autonomy = AutonomyManager()
         self.proactive = ProactiveManager(self)
+        self.memory_extractor: Optional[MemoryExtractor] = None
+        self.action_planner = ActionPlanner(self.ollama, self.executor, self.validator)
 
     async def initialize(self):
         """Initialisiert alle Komponenten."""
         await self.memory.initialize()
+
+        # Semantic Memory mit Context Builder verbinden
+        self.context_builder.set_semantic_memory(self.memory.semantic)
+
+        # Memory Extractor initialisieren
+        self.memory_extractor = MemoryExtractor(self.ollama, self.memory.semantic)
+
         await self.proactive.start()
-        logger.info("MindHome Assistant Brain initialisiert")
+        logger.info("MindHome Assistant Brain initialisiert (inkl. Semantic Memory)")
 
     async def process(self, text: str, person: Optional[str] = None) -> dict:
         """
@@ -64,16 +76,24 @@ class AssistantBrain:
         # WebSocket: Denk-Status senden
         await emit_thinking()
 
-        # 1. Kontext sammeln
-        context = await self.context_builder.build(trigger="voice")
+        # 1. Kontext sammeln (inkl. semantischer Erinnerungen)
+        context = await self.context_builder.build(
+            trigger="voice", user_text=text, person=person or ""
+        )
         if person:
             context.setdefault("person", {})["name"] = person
 
         # 2. Modell waehlen
         model = self.model_router.select_model(text)
 
-        # 3. System Prompt bauen
+        # 3. System Prompt bauen (mit semantischen Erinnerungen)
         system_prompt = self.personality.build_system_prompt(context)
+
+        # Semantische Erinnerungen zum System Prompt hinzufuegen
+        memories = context.get("memories", {})
+        memory_context = self._build_memory_context(memories)
+        if memory_context:
+            system_prompt += memory_context
 
         # 4. Letzte Gespraeche laden (Working Memory)
         recent = await self.memory.get_recent_conversations(limit=5)
@@ -82,79 +102,92 @@ class AssistantBrain:
             messages.append({"role": conv["role"], "content": conv["content"]})
         messages.append({"role": "user", "content": text})
 
-        # 5. LLM aufrufen (mit Function Calling Tools)
-        response = await self.ollama.chat(
-            messages=messages,
-            model=model,
-            tools=ASSISTANT_TOOLS,
-        )
+        # 5. Komplexe Anfragen ueber Action Planner routen
+        if self.action_planner.is_complex_request(text):
+            logger.info("Komplexe Anfrage erkannt -> Action Planner")
+            planner_result = await self.action_planner.plan_and_execute(
+                text=text,
+                system_prompt=system_prompt,
+                context=context,
+                messages=messages,
+            )
+            response_text = planner_result.get("response", "")
+            executed_actions = planner_result.get("actions", [])
+            model = "qwen2.5:14b"  # Planner nutzt immer smart model
+        else:
+            # 5b. Einfache Anfragen: Direkt LLM aufrufen
+            response = await self.ollama.chat(
+                messages=messages,
+                model=model,
+                tools=ASSISTANT_TOOLS,
+            )
 
-        if "error" in response:
-            logger.error("LLM Fehler: %s", response["error"])
-            return {
-                "response": "Da stimmt etwas nicht. Ich kann gerade nicht denken.",
-                "actions": [],
-                "model_used": model,
-                "error": response["error"],
-            }
+            if "error" in response:
+                logger.error("LLM Fehler: %s", response["error"])
+                return {
+                    "response": "Da stimmt etwas nicht. Ich kann gerade nicht denken.",
+                    "actions": [],
+                    "model_used": model,
+                    "error": response["error"],
+                }
 
-        # 6. Antwort verarbeiten
-        message = response.get("message", {})
-        response_text = message.get("content", "")
-        tool_calls = message.get("tool_calls", [])
-        executed_actions = []
+            # 6. Antwort verarbeiten
+            message = response.get("message", {})
+            response_text = message.get("content", "")
+            tool_calls = message.get("tool_calls", [])
+            executed_actions = []
 
-        # 7. Function Calls ausfuehren
-        if tool_calls:
-            for tool_call in tool_calls:
-                func = tool_call.get("function", {})
-                func_name = func.get("name", "")
-                func_args = func.get("arguments", {})
+            # 7. Function Calls ausfuehren
+            if tool_calls:
+                for tool_call in tool_calls:
+                    func = tool_call.get("function", {})
+                    func_name = func.get("name", "")
+                    func_args = func.get("arguments", {})
 
-                logger.info("Function Call: %s(%s)", func_name, func_args)
+                    logger.info("Function Call: %s(%s)", func_name, func_args)
 
-                # Validierung
-                validation = self.validator.validate(func_name, func_args)
-                if not validation.ok:
-                    if validation.needs_confirmation:
-                        response_text = f"Sicherheitsbestaetigung noetig: {validation.reason}"
-                        executed_actions.append({
-                            "function": func_name,
-                            "args": func_args,
-                            "result": "needs_confirmation",
-                        })
-                        continue
-                    else:
-                        logger.warning("Validation failed: %s", validation.reason)
-                        executed_actions.append({
-                            "function": func_name,
-                            "args": func_args,
-                            "result": f"blocked: {validation.reason}",
-                        })
-                        continue
+                    # Validierung
+                    validation = self.validator.validate(func_name, func_args)
+                    if not validation.ok:
+                        if validation.needs_confirmation:
+                            response_text = f"Sicherheitsbestaetigung noetig: {validation.reason}"
+                            executed_actions.append({
+                                "function": func_name,
+                                "args": func_args,
+                                "result": "needs_confirmation",
+                            })
+                            continue
+                        else:
+                            logger.warning("Validation failed: %s", validation.reason)
+                            executed_actions.append({
+                                "function": func_name,
+                                "args": func_args,
+                                "result": f"blocked: {validation.reason}",
+                            })
+                            continue
 
-                # Ausfuehren
-                result = await self.executor.execute(func_name, func_args)
-                executed_actions.append({
-                    "function": func_name,
-                    "args": func_args,
-                    "result": result,
-                })
+                    # Ausfuehren
+                    result = await self.executor.execute(func_name, func_args)
+                    executed_actions.append({
+                        "function": func_name,
+                        "args": func_args,
+                        "result": result,
+                    })
 
-                # WebSocket: Aktion melden
-                await emit_action(func_name, func_args, result)
+                    # WebSocket: Aktion melden
+                    await emit_action(func_name, func_args, result)
 
-        # Wenn Aktionen, aber keine Text-Antwort: Standard-Bestaetigung
-        if executed_actions and not response_text:
-            if all(a["result"].get("success", False) for a in executed_actions if isinstance(a["result"], dict)):
-                response_text = "Erledigt."
-            else:
-                failed = [
-                    a["result"].get("message", "")
-                    for a in executed_actions
-                    if isinstance(a["result"], dict) and not a["result"].get("success", False)
-                ]
-                response_text = f"Problem: {', '.join(failed)}" if failed else "Teilweise erledigt."
+            # Wenn Aktionen, aber keine Text-Antwort: Standard-Bestaetigung
+            if executed_actions and not response_text:
+                if all(a["result"].get("success", False) for a in executed_actions if isinstance(a["result"], dict)):
+                    response_text = "Erledigt."
+                else:
+                    failed = [
+                        a["result"].get("message", "")
+                        for a in executed_actions
+                        if isinstance(a["result"], dict) and not a["result"].get("success", False)
+                    ]
+                    response_text = f"Problem: {', '.join(failed)}" if failed else "Teilweise erledigt."
 
         # 8. Im Gedaechtnis speichern
         await self.memory.add_conversation("user", text)
@@ -168,6 +201,14 @@ class AssistantBrain:
                 "room": context.get("room", "unknown"),
                 "actions": json.dumps([a["function"] for a in executed_actions]),
             })
+
+        # 10. Fakten extrahieren (async im Hintergrund - blockiert nicht)
+        if self.memory_extractor and len(text.split()) > 3:
+            asyncio.create_task(
+                self._extract_facts_background(
+                    text, response_text, person or "unknown", context
+                )
+            )
 
         result = {
             "response": response_text,
@@ -195,11 +236,59 @@ class AssistantBrain:
                 "home_assistant": "connected" if ha_ok else "disconnected",
                 "redis": "connected" if self.memory.redis else "disconnected",
                 "chromadb": "connected" if self.memory.chroma_collection else "disconnected",
+                "semantic_memory": "connected" if self.memory.semantic.chroma_collection else "disconnected",
+                "memory_extractor": "active" if self.memory_extractor else "inactive",
+                "action_planner": "active",
                 "proactive": "running" if self.proactive._running else "stopped",
             },
             "models_available": models,
             "autonomy": self.autonomy.get_level_info(),
         }
+
+    def _build_memory_context(self, memories: dict) -> str:
+        """Baut den Gedaechtnis-Abschnitt fuer den System Prompt."""
+        parts = []
+
+        relevant = memories.get("relevant_facts", [])
+        person_facts = memories.get("person_facts", [])
+
+        if relevant:
+            parts.append("\nRELEVANTE ERINNERUNGEN:")
+            for fact in relevant:
+                parts.append(f"- {fact}")
+
+        if person_facts:
+            parts.append("\nBEKANNTE FAKTEN UEBER DEN USER:")
+            for fact in person_facts:
+                parts.append(f"- {fact}")
+
+        if parts:
+            parts.insert(0, "\n\nGEDAECHTNIS (nutze diese Infos wenn relevant):")
+            return "\n".join(parts)
+
+        return ""
+
+    async def _extract_facts_background(
+        self,
+        user_text: str,
+        assistant_response: str,
+        person: str,
+        context: dict,
+    ):
+        """Extrahiert Fakten im Hintergrund (non-blocking)."""
+        try:
+            facts = await self.memory_extractor.extract_and_store(
+                user_text=user_text,
+                assistant_response=assistant_response,
+                person=person,
+                context=context,
+            )
+            if facts:
+                logger.info(
+                    "Hintergrund-Extraktion: %d Fakt(en) gespeichert", len(facts)
+                )
+        except Exception as e:
+            logger.error("Fehler bei Hintergrund-Fakten-Extraktion: %s", e)
 
     async def shutdown(self):
         """Faehrt MindHome Assistant herunter."""

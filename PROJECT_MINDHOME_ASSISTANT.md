@@ -1182,64 +1182,71 @@ Du: "Gute Nacht"
 
 Jede Phase macht MindHome Assistant in einem Aspekt besser. Keine Phase ist Voraussetzung fuer die naechste.
 
-### Phase 2: Semantisches Gedaechtnis (ChromaDB)
+### Phase 2: Semantisches Gedaechtnis (ChromaDB) - IMPLEMENTIERT
 
 **Ziel**: MindHome Assistant wird "schlauer" ueber Zeit
+
+**Status**: Vollstaendig implementiert in v0.2.0
 
 ```
 Memory Architecture:
 
-+------------+  +------------+  +---------------+
-| Working    |  | Episodic   |  | Semantic      |
-| Memory     |  | Memory     |  | Memory        |
-|            |  |            |  |               |
-| Aktuelle   |  | ChromaDB   |  | PostgreSQL    |
-| Session    |  | Vektor-    |  | Extrahierte   |
-| Kontext    |  | suche ueber|  | Fakten        |
-|            |  | Gespraeche |  |               |
-| ~letzte    |  |            |  | "Max mag 21C" |
-| 10 Min     |  | "Was war   |  | "Allergie:    |
-|            |  |  aehnlich?"|  |  Haselnuss"   |
-+------------+  +------------+  +---------------+
++------------+  +------------+  +-------------------+
+| Working    |  | Episodic   |  | Semantic          |
+| Memory     |  | Memory     |  | Memory            |
+|            |  |            |  |                   |
+| Redis      |  | ChromaDB   |  | ChromaDB + Redis  |
+| Aktuelle   |  | Vektor-    |  | Extrahierte       |
+| Session    |  | suche ueber|  | Fakten            |
+| Kontext    |  | Gespraeche |  |                   |
+| ~letzte    |  |            |  | "Max mag 21C"     |
+| 50 Nachr.  |  | "Was war   |  | "Allergie:        |
+|            |  |  aehnlich?"|  |  Haselnuss"       |
++------------+  +------------+  +-------------------+
        |              |              |
        +--------------+--------------+
                       |
                Context Builder
 ```
 
-**Memory Extraction** - nach jeder Konversation:
+**Implementierte Komponenten:**
 
-```python
-class MemoryExtractor:
-    """Extrahiert Fakten aus Gespraechen."""
+1. **SemanticMemory** (`assistant/semantic_memory.py`)
+   - ChromaDB Collection `mha_semantic_facts` fuer Vektor-Suche
+   - Redis-Indizes fuer schnellen Zugriff (Person, Kategorie)
+   - Duplikat-Erkennung (aehnliche Fakten werden zusammengefuehrt)
+   - Confidence-System (steigt bei Bestaetigung)
+   - 6 Fakten-Kategorien: preference, person, habit, health, work, general
 
-    EXTRACTION_PROMPT = """
-    Analysiere dieses Gespraech und extrahiere FAKTEN:
-    - Praeferenzen (mag X, hasst Y)
-    - Personen (Frau heisst..., Chef heisst...)
-    - Gewohnheiten (geht immer um X joggen)
-    - Gesundheit (Allergie, Unvertraeglichkeit)
-    - Arbeit (Job, Projekte)
-    """
+2. **MemoryExtractor** (`assistant/memory_extractor.py`)
+   - LLM-basierte Fakten-Extraktion nach jedem Gespraech
+   - Laeuft async im Hintergrund (blockiert nicht)
+   - Nutzt schnelles Modell (qwen2.5:3b)
+   - Filtert triviale Befehle automatisch
+   - JSON-Parsing mit Fallback
 
-    async def extract_and_store(self, conversation):
-        facts = await self.llm.extract(self.EXTRACTION_PROMPT, conversation)
+3. **Context Builder Integration**
+   - Relevante Fakten werden automatisch in den LLM-Kontext eingebaut
+   - Vektor-Suche: Fakten passend zur aktuellen Anfrage
+   - Person-Fakten: Bekannte Praeferenzen des Users
+   - Mindest-Confidence fuer Kontext-Einblendung
 
-        # Fakten -> PostgreSQL (Semantic Memory)
-        for fact in facts:
-            await self.semantic_db.upsert(fact)
-
-        # Ganzes Gespraech -> ChromaDB (Episodic Memory)
-        embedding = await self.embedder.embed(conversation)
-        await self.chroma.add(documents=[conversation], embeddings=[embedding])
-```
+4. **REST API Endpoints**
+   - `GET /api/assistant/memory/facts` - Alle Fakten + Statistiken
+   - `GET /api/assistant/memory/facts/search?q=...` - Vektor-Suche
+   - `GET /api/assistant/memory/facts/person/{name}` - Fakten pro Person
+   - `GET /api/assistant/memory/facts/category/{cat}` - Fakten pro Kategorie
+   - `DELETE /api/assistant/memory/facts/{id}` - Fakt loeschen
+   - `GET /api/assistant/memory/stats` - Gesamtstatistiken
 
 **Lern-Effekt ueber Zeit:**
 
 ```
 Woche 1: "Mach es waermer" -> "Auf welche Temperatur?"
 Woche 4: "Mach es waermer" -> "Buero geht auf 21."
+         (Fakt gespeichert: "Max bevorzugt 21 Grad im Buero", Confidence: 0.95)
 Woche 8: "Lisa kommt vorbei" -> "Wohnzimmer auf 22? Lisa mag es waermer."
+         (Fakten: "Lisa bevorzugt 22 Grad", "Lisa ist die Freundin von Max")
 ```
 
 ### Phase 3: Personality Engine + Stimmungserkennung
@@ -1290,43 +1297,61 @@ class MoodDetector:
         return self._classify(signals)
 ```
 
-### Phase 4: Action Planner (Multi-Step)
+### Phase 4: Action Planner (Multi-Step) - IMPLEMENTIERT
 
 **Ziel**: Komplexe Befehle funktionieren
 
-```python
-class ActionPlanner:
-    """Plant und fuehrt komplexe Aktionsfolgen aus."""
+**Status**: Vollstaendig implementiert in v0.3.0
 
-    async def plan_and_execute(self, request, context):
-        # 1. LLM plant Schritte
-        plan = await self.llm.plan(request, context)
+**Implementierte Komponenten:**
 
-        # 2. Risiko-Check (Bestaetigung bei kritischen Aktionen)
-        if any(step.risk_level == "high" for step in plan.steps):
-            await self.confirm_with_user(plan)
-            return
+1. **ActionPlanner** (`assistant/action_planner.py`)
+   - Erkennt komplexe Anfragen via Keyword-Heuristik
+   - Iterative Multi-Turn Ausfuehrung: LLM -> Tools -> Ergebnisse -> LLM -> ...
+   - Nutzt immer das smarte Modell (14B) fuer Planung
+   - Maximale Sicherheit: Validierung pro Schritt, Confirmation bei kritischen Aktionen
+   - Maximal 5 Iterationen (Endlosschleifen-Schutz)
+   - Plan-Inspektion via API
 
-        # 3. Parallele + sequentielle Ausfuehrung
-        results = await self.executor.run(plan)
+2. **Brain Integration**
+   - Automatische Erkennung komplexer Anfragen
+   - Routing: einfach -> direkt LLM, komplex -> Action Planner
+   - Einfache Befehle bleiben schnell (kein Overhead)
 
-        # 4. Zusammenfassung
-        return await self.llm.summarize(plan, results)
+3. **REST API**
+   - `GET /api/assistant/planner/last` - Letzten Plan inspizieren
+
+**Ablauf einer komplexen Anfrage:**
+
+```
+User: "Mach alles fertig fuer morgen frueh"
+         |
+    [is_complex_request] -> Ja ("alles", "fertig machen")
+         |
+    [Action Planner]
+         |
+    Iteration 1: LLM plant -> Tool Calls:
+      - get_entity_state("sensor.calendar_tomorrow")
+      - set_climate("schlafzimmer", 18, "heat")
+    -> Ergebnisse zurueck an LLM
+         |
+    Iteration 2: LLM sieht Kalender -> weitere Calls:
+      - activate_scene("gute_nacht")
+      - set_presence_mode("sleep")
+    -> LLM formuliert Zusammenfassung
+         |
+    "Morgen um 9 Standup, um 2 Kundentermin.
+     Schlafzimmer auf 18 Grad, Gute-Nacht-Szene aktiv."
 ```
 
-**Beispiel:**
+**Beispiele fuer komplexe Anfragen:**
 
 ```
-Du: "Mach alles fertig fuer morgen frueh"
-
-Plan:
-  1. Kalender morgen checken -> "09:00 Standup, 14:00 Kunde"
-  2. Wecker stellen -> 06:30
-  3. Klima Schlafzimmer -> Nachtmodus
-  4. Kaffee-Timer -> 06:25
-
-MindHome Assistant: "Morgen um 9 Standup, um 2 Kundentermin.
-Wecker steht auf halb 7, Kaffee kommt 5 Minuten vorher."
+"Mach alles fertig fuer morgen frueh"
+"Ich gehe fuer 3 Tage weg"
+"Besuch kommt in einer Stunde"
+"Party vorbereiten im Wohnzimmer"
+"Zuerst Licht aus, danach Rolllaeden runter und Alarm scharf"
 ```
 
 ### Phase 5: Feedback Loop
@@ -1661,17 +1686,19 @@ Events (Client -> Server):
 | Phase | Was | Effekt |
 |-------|-----|--------|
 | **Phase 1** | Whisper + Ollama + Piper + Context Builder + Functions | MindHome Assistant lebt. Grundlegende Sprachsteuerung funktioniert. |
-| **Phase 2** | ChromaDB + Memory Extraction | MindHome Assistant wird schlauer ueber Zeit. Erinnert sich. |
+| **Phase 2** | Semantic Memory + Memory Extractor + Fakten-DB | MindHome Assistant wird schlauer ueber Zeit. Erinnert sich. **IMPLEMENTIERT** |
 | **Phase 3** | Personality Engine + Mood Detection | MindHome Assistant fuehlt sich menschlicher an. Passt sich an. |
-| **Phase 4** | Action Planner (Multi-Step) | Komplexe Befehle wie "Mach alles fertig" funktionieren. |
+| **Phase 4** | Action Planner (Multi-Step, iterativ) | Komplexe Befehle wie "Mach alles fertig" funktionieren. **IMPLEMENTIERT** |
 | **Phase 5** | Feedback Loop | MindHome Assistant nervt weniger. Lernt was willkommen ist. |
 | **Phase 6** | Activity Engine + Stille-Matrix | Perfektes Timing. Stoert nie. |
 | **Phase 7** | Daily Summarizer + Langzeitgedaechtnis | MindHome Assistant kennt dich wirklich. Monatelange Erinnerung. |
 
 ---
 
-> Phase 1 ist das Fundament. Alles weitere sind Verbesserungen die
-> Stueck fuer Stueck aktiviert werden wenn die Basis laeuft.
+> Phase 1, 2 und 4 sind implementiert. Phase 1 ist das Fundament,
+> Phase 2 gibt MindHome Assistant ein Gedaechtnis, Phase 4 ermoeglicht
+> komplexe Multi-Step Aktionen. Alles weitere sind Verbesserungen
+> die Stueck fuer Stueck aktiviert werden.
 > Jede Phase macht MindHome Assistant merkbar besser.
 
 ---

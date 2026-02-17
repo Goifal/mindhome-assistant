@@ -1,6 +1,6 @@
 """
 Context Builder - Sammelt alle relevanten Daten fuer den LLM-Prompt.
-Holt Daten von Home Assistant und MindHome via REST API.
+Holt Daten von Home Assistant, MindHome und Semantic Memory via REST API.
 """
 
 import logging
@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Optional
 
 from .ha_client import HomeAssistantClient
+from .semantic_memory import SemanticMemory
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +25,22 @@ class ContextBuilder:
 
     def __init__(self, ha_client: HomeAssistantClient):
         self.ha = ha_client
+        self.semantic: Optional[SemanticMemory] = None
 
-    async def build(self, trigger: str = "voice") -> dict:
+    def set_semantic_memory(self, semantic: SemanticMemory):
+        """Setzt die Referenz zum Semantic Memory."""
+        self.semantic = semantic
+
+    async def build(
+        self, trigger: str = "voice", user_text: str = "", person: str = ""
+    ) -> dict:
         """
         Sammelt den kompletten Kontext.
 
         Args:
             trigger: Was den Kontext ausloest ("voice", "proactive", "api")
+            user_text: User-Eingabe fuer semantische Suche
+            person: Name der Person
 
         Returns:
             Strukturierter Kontext als Dict
@@ -60,7 +70,44 @@ class ContextBuilder:
         # Warnungen
         context["alerts"] = self._extract_alerts(states or [])
 
+        # Semantisches Gedaechtnis - relevante Fakten zur Anfrage
+        if self.semantic and user_text:
+            context["memories"] = await self._get_relevant_memories(
+                user_text, person
+            )
+
         return context
+
+    async def _get_relevant_memories(
+        self, user_text: str, person: str = ""
+    ) -> dict:
+        """Holt relevante Fakten aus dem semantischen Gedaechtnis."""
+        memories = {"relevant_facts": [], "person_facts": []}
+
+        if not self.semantic:
+            return memories
+
+        try:
+            # Fakten die zur aktuellen Anfrage passen
+            relevant = await self.semantic.search_facts(
+                query=user_text, limit=3, person=person or None
+            )
+            memories["relevant_facts"] = [
+                f["content"] for f in relevant if f.get("relevance", 0) > 0.3
+            ]
+
+            # Allgemeine Fakten ueber die Person (Praeferenzen)
+            if person:
+                person_facts = await self.semantic.get_facts_by_person(person)
+                # Top-5 mit hoechster Confidence
+                memories["person_facts"] = [
+                    f["content"] for f in person_facts[:5]
+                    if f.get("confidence", 0) >= 0.6
+                ]
+        except Exception as e:
+            logger.error("Fehler beim Laden semantischer Erinnerungen: %s", e)
+
+        return memories
 
     def _extract_house_status(self, states: list[dict]) -> dict:
         """Extrahiert den Haus-Status aus HA States."""

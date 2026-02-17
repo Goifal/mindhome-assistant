@@ -4,7 +4,7 @@
 
 assistant:
   name: "MindHome Assistant"
-  version: "0.1.0"
+  version: "0.3.0"
   language: "de"
 
 # --- Autonomie-Level ---
@@ -80,6 +80,55 @@ proactive:
     - "kino"
     - "schlafen"
     - "meditation"
+
+# --- Semantisches Gedaechtnis (Phase 2) ---
+memory:
+  # Fakten-Extraktion nach Gespraechen
+  extraction_enabled: true
+  # Minimale Wortanzahl fuer Extraktion
+  extraction_min_words: 5
+  # Modell fuer Fakten-Extraktion (schnelles reicht)
+  extraction_model: "qwen2.5:3b"
+  # Maximale Fakten pro Person im Kontext
+  max_person_facts_in_context: 5
+  # Maximale relevante Fakten im Kontext
+  max_relevant_facts_in_context: 3
+  # Minimale Confidence fuer Kontext-Einblendung
+  min_confidence_for_context: 0.6
+  # Duplikat-Schwelle (0.0 = exakt gleich, 1.0 = komplett anders)
+  duplicate_threshold: 0.15
+
+# --- Action Planner (Phase 4) ---
+planner:
+  # Maximale Iterationen (LLM-Runden) pro Plan
+  max_iterations: 5
+  # Modell fuer Planung (immer smart)
+  model: "qwen2.5:14b"
+  # Keywords die komplexe Anfragen erkennen
+  complex_keywords:
+    - "alles"
+    - "fertig machen"
+    - "vorbereiten"
+    - "gehe weg"
+    - "fahre weg"
+    - "verreise"
+    - "urlaub"
+    - "routine"
+    - "morgenroutine"
+    - "abendroutine"
+    - "wenn ich"
+    - "falls ich"
+    - "bevor ich"
+    - "zuerst"
+    - "danach"
+    - "und dann"
+    - "ausserdem"
+    - "komplett"
+    - "ueberall"
+    - "in allen"
+    - "party"
+    - "besuch kommt"
+    - "gaeste"
 
 # --- Context Builder ---
 context:
