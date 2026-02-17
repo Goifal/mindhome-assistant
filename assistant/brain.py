@@ -10,18 +10,22 @@ import logging
 from typing import Optional
 
 from .action_planner import ActionPlanner
+from .activity import ActivityEngine
 from .autonomy import AutonomyManager
 from .config import settings
 from .context_builder import ContextBuilder
+from .feedback import FeedbackTracker
 from .function_calling import ASSISTANT_TOOLS, FunctionExecutor
 from .function_validator import FunctionValidator
 from .ha_client import HomeAssistantClient
 from .memory import MemoryManager
 from .memory_extractor import MemoryExtractor
 from .model_router import ModelRouter
+from .mood_detector import MoodDetector
 from .ollama_client import OllamaClient
 from .personality import PersonalityEngine
 from .proactive import ProactiveManager
+from .summarizer import DailySummarizer
 from .websocket import emit_thinking, emit_speaking, emit_action
 
 logger = logging.getLogger(__name__)
@@ -43,8 +47,12 @@ class AssistantBrain:
         self.validator = FunctionValidator()
         self.memory = MemoryManager()
         self.autonomy = AutonomyManager()
+        self.feedback = FeedbackTracker()
+        self.activity = ActivityEngine(self.ha)
         self.proactive = ProactiveManager(self)
+        self.summarizer = DailySummarizer(self.ollama)
         self.memory_extractor: Optional[MemoryExtractor] = None
+        self.mood = MoodDetector()
         self.action_planner = ActionPlanner(self.ollama, self.executor, self.validator)
 
     async def initialize(self):
@@ -54,11 +62,28 @@ class AssistantBrain:
         # Semantic Memory mit Context Builder verbinden
         self.context_builder.set_semantic_memory(self.memory.semantic)
 
+        # Activity Engine mit Context Builder verbinden (Phase 6)
+        self.context_builder.set_activity_engine(self.activity)
+
+        # Mood Detector initialisieren (Phase 3)
+        await self.mood.initialize(redis_client=self.memory.redis)
+        self.personality.set_mood_detector(self.mood)
+
         # Memory Extractor initialisieren
         self.memory_extractor = MemoryExtractor(self.ollama, self.memory.semantic)
 
+        # Feedback Tracker initialisieren (Phase 5)
+        await self.feedback.initialize(redis_client=self.memory.redis)
+
+        # Daily Summarizer initialisieren (Phase 7)
+        self.summarizer.memory = self.memory
+        await self.summarizer.initialize(
+            redis_client=self.memory.redis,
+            chroma_collection=self.memory.chroma_collection,
+        )
+
         await self.proactive.start()
-        logger.info("MindHome Assistant Brain initialisiert (inkl. Semantic Memory)")
+        logger.info("Jarvis initialisiert (alle Systeme aktiv)")
 
     async def process(self, text: str, person: Optional[str] = None) -> dict:
         """
@@ -83,10 +108,14 @@ class AssistantBrain:
         if person:
             context.setdefault("person", {})["name"] = person
 
-        # 2. Modell waehlen
+        # 2. Stimmungsanalyse (Phase 3)
+        mood_result = await self.mood.analyze(text, person or "")
+        context["mood"] = mood_result
+
+        # 3. Modell waehlen
         model = self.model_router.select_model(text)
 
-        # 3. System Prompt bauen (mit semantischen Erinnerungen)
+        # 4. System Prompt bauen (mit semantischen Erinnerungen + Stimmung)
         system_prompt = self.personality.build_system_prompt(context)
 
         # Semantische Erinnerungen zum System Prompt hinzufuegen
@@ -95,14 +124,19 @@ class AssistantBrain:
         if memory_context:
             system_prompt += memory_context
 
-        # 4. Letzte Gespraeche laden (Working Memory)
+        # Langzeit-Summaries bei Fragen ueber die Vergangenheit (Phase 7)
+        summary_context = await self._get_summary_context(text)
+        if summary_context:
+            system_prompt += summary_context
+
+        # 5. Letzte Gespraeche laden (Working Memory)
         recent = await self.memory.get_recent_conversations(limit=5)
         messages = [{"role": "system", "content": system_prompt}]
         for conv in recent:
             messages.append({"role": conv["role"], "content": conv["content"]})
         messages.append({"role": "user", "content": text})
 
-        # 5. Komplexe Anfragen ueber Action Planner routen
+        # 6. Komplexe Anfragen ueber Action Planner routen
         if self.action_planner.is_complex_request(text):
             logger.info("Komplexe Anfrage erkannt -> Action Planner")
             planner_result = await self.action_planner.plan_and_execute(
@@ -115,7 +149,7 @@ class AssistantBrain:
             executed_actions = planner_result.get("actions", [])
             model = "qwen2.5:14b"  # Planner nutzt immer smart model
         else:
-            # 5b. Einfache Anfragen: Direkt LLM aufrufen
+            # 6b. Einfache Anfragen: Direkt LLM aufrufen
             response = await self.ollama.chat(
                 messages=messages,
                 model=model,
@@ -131,13 +165,13 @@ class AssistantBrain:
                     "error": response["error"],
                 }
 
-            # 6. Antwort verarbeiten
+            # 7. Antwort verarbeiten
             message = response.get("message", {})
             response_text = message.get("content", "")
             tool_calls = message.get("tool_calls", [])
             executed_actions = []
 
-            # 7. Function Calls ausfuehren
+            # 8. Function Calls ausfuehren
             if tool_calls:
                 for tool_call in tool_calls:
                     func = tool_call.get("function", {})
@@ -238,7 +272,11 @@ class AssistantBrain:
                 "chromadb": "connected" if self.memory.chroma_collection else "disconnected",
                 "semantic_memory": "connected" if self.memory.semantic.chroma_collection else "disconnected",
                 "memory_extractor": "active" if self.memory_extractor else "inactive",
+                "mood_detector": f"active (mood: {self.mood.get_current_mood()['mood']})",
                 "action_planner": "active",
+                "feedback_tracker": "running" if self.feedback._running else "stopped",
+                "activity_engine": "active",
+                "summarizer": "running" if self.summarizer._running else "stopped",
                 "proactive": "running" if self.proactive._running else "stopped",
             },
             "models_available": models,
@@ -268,6 +306,40 @@ class AssistantBrain:
 
         return ""
 
+    async def _get_summary_context(self, text: str) -> str:
+        """Holt relevante Langzeit-Summaries wenn die Frage die Vergangenheit betrifft."""
+        # Keywords die auf Vergangenheits-Fragen hindeuten
+        past_keywords = [
+            "gestern", "letzte woche", "letzten monat", "letztes jahr",
+            "vor ", "frueher", "damals", "wann war", "wie war",
+            "erinnerst du", "weisst du noch", "war der", "war die",
+            "im januar", "im februar", "im maerz", "im april", "im mai",
+            "im juni", "im juli", "im august", "im september",
+            "im oktober", "im november", "im dezember",
+            "letzte", "letzten", "letzter", "vorige", "vergangene",
+        ]
+
+        text_lower = text.lower()
+        if not any(kw in text_lower for kw in past_keywords):
+            return ""
+
+        try:
+            summaries = await self.summarizer.search_summaries(text, limit=3)
+            if not summaries:
+                return ""
+
+            parts = ["\n\nLANGZEIT-ERINNERUNGEN (vergangene Tage/Wochen):"]
+            for s in summaries:
+                date = s.get("date", "")
+                stype = s.get("summary_type", "")
+                content = s.get("content", "")
+                parts.append(f"[{stype} {date}]: {content}")
+
+            return "\n".join(parts)
+        except Exception as e:
+            logger.debug("Fehler bei Summary-Kontext: %s", e)
+            return ""
+
     async def _extract_facts_background(
         self,
         user_text: str,
@@ -293,5 +365,7 @@ class AssistantBrain:
     async def shutdown(self):
         """Faehrt MindHome Assistant herunter."""
         await self.proactive.stop()
+        await self.summarizer.stop()
+        await self.feedback.stop()
         await self.memory.close()
         logger.info("MindHome Assistant heruntergefahren")

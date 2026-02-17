@@ -26,10 +26,15 @@ class ContextBuilder:
     def __init__(self, ha_client: HomeAssistantClient):
         self.ha = ha_client
         self.semantic: Optional[SemanticMemory] = None
+        self._activity_engine = None
 
     def set_semantic_memory(self, semantic: SemanticMemory):
         """Setzt die Referenz zum Semantic Memory."""
         self.semantic = semantic
+
+    def set_activity_engine(self, activity_engine):
+        """Setzt die Referenz zur Activity Engine (Phase 6)."""
+        self._activity_engine = activity_engine
 
     async def build(
         self, trigger: str = "voice", user_text: str = "", person: str = ""
@@ -66,6 +71,17 @@ class ContextBuilder:
         mindhome_data = await self._get_mindhome_data()
         if mindhome_data:
             context["mindhome"] = mindhome_data
+
+        # Aktivitaets-Erkennung (Phase 6)
+        if self._activity_engine:
+            try:
+                detection = await self._activity_engine.detect_activity()
+                context["activity"] = {
+                    "current": detection["activity"],
+                    "confidence": detection["confidence"],
+                }
+            except Exception as e:
+                logger.debug("Activity Engine Fehler: %s", e)
 
         # Warnungen
         context["alerts"] = self._extract_alerts(states or [])

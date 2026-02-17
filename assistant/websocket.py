@@ -93,10 +93,16 @@ async def emit_listening():
     await ws_manager.broadcast("assistant.listening", {"status": "active"})
 
 
-async def emit_proactive(text: str, event_type: str, urgency: str = "medium"):
-    """Signalisiert: Proaktive Meldung."""
+async def emit_proactive(
+    text: str,
+    event_type: str,
+    urgency: str = "medium",
+    notification_id: str = "",
+):
+    """Signalisiert: Proaktive Meldung (mit ID fuer Feedback-Tracking)."""
     await ws_manager.broadcast("assistant.proactive", {
         "text": text,
         "event_type": event_type,
         "urgency": urgency,
+        "notification_id": notification_id,
     })

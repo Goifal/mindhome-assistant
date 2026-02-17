@@ -31,7 +31,7 @@ brain = AssistantBrain()
 async def lifespan(app: FastAPI):
     """Startup und Shutdown."""
     logger.info("=" * 50)
-    logger.info(" MindHome Assistant v0.3.0 startet...")
+    logger.info(" MindHome Assistant v0.8.0 startet...")
     logger.info("=" * 50)
     await brain.initialize()
 
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MindHome Assistant",
     description="Lokaler KI-Sprachassistent fuer Home Assistant",
-    version="0.3.0",
+    version="0.7.0",
     lifespan=lifespan,
 )
 
@@ -74,6 +74,12 @@ class ChatResponse(BaseModel):
     actions: list = []
     model_used: str = ""
     context_room: str = ""
+
+
+class FeedbackRequest(BaseModel):
+    notification_id: str = ""
+    event_type: str = ""
+    feedback_type: str  # ignored, dismissed, acknowledged, engaged, thanked
 
 
 class SettingsUpdate(BaseModel):
@@ -182,6 +188,112 @@ async def memory_stats():
     }
 
 
+# ----- Feedback Endpoints (Phase 5) -----
+
+@app.put("/api/assistant/feedback")
+async def submit_feedback(request: FeedbackRequest):
+    """
+    Feedback auf eine proaktive Meldung geben.
+
+    feedback_type: ignored, dismissed, acknowledged, engaged, thanked
+    notification_id: ID der Meldung (aus WebSocket-Event)
+    event_type: Alternativ den Event-Typ direkt angeben
+    """
+    identifier = request.notification_id or request.event_type
+    if not identifier:
+        raise HTTPException(
+            status_code=400,
+            detail="notification_id oder event_type erforderlich",
+        )
+
+    result = await brain.feedback.record_feedback(identifier, request.feedback_type)
+    if not result:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ungueltiger feedback_type: {request.feedback_type}",
+        )
+    return result
+
+
+@app.get("/api/assistant/feedback/stats")
+async def feedback_stats():
+    """Feedback-Statistiken fuer alle Event-Typen."""
+    return await brain.feedback.get_stats()
+
+
+@app.get("/api/assistant/feedback/stats/{event_type}")
+async def feedback_stats_event(event_type: str):
+    """Feedback-Statistiken fuer einen bestimmten Event-Typ."""
+    return await brain.feedback.get_stats(event_type)
+
+
+@app.get("/api/assistant/feedback/scores")
+async def feedback_scores():
+    """Alle Feedback-Scores auf einen Blick."""
+    scores = await brain.feedback.get_all_scores()
+    return {"scores": scores, "total_types": len(scores)}
+
+
+# ----- Mood Detector Endpoints (Phase 3) -----
+
+@app.get("/api/assistant/mood")
+async def get_mood():
+    """Aktuelle Stimmungserkennung des Benutzers."""
+    return brain.mood.get_current_mood()
+
+
+# ----- Status Report Endpoint -----
+
+@app.get("/api/assistant/status")
+async def get_status_report(person: Optional[str] = None):
+    """Generiert einen Jarvis-artigen Status-Bericht."""
+    report = await brain.proactive.generate_status_report(person or settings.user_name)
+    return {"report": report, "person": person or settings.user_name}
+
+
+# ----- Activity Engine Endpoints (Phase 6) -----
+
+@app.get("/api/assistant/activity")
+async def get_activity():
+    """Erkennt die aktuelle Aktivitaet des Benutzers."""
+    detection = await brain.activity.detect_activity()
+    return detection
+
+
+@app.get("/api/assistant/activity/delivery")
+async def get_delivery(urgency: str = "medium"):
+    """Prueft wie eine Meldung bei aktueller Aktivitaet zugestellt wuerde."""
+    result = await brain.activity.should_deliver(urgency)
+    return result
+
+
+# ----- Summarizer Endpoints (Phase 7) -----
+
+@app.get("/api/assistant/summaries")
+async def get_summaries():
+    """Die neuesten Tages-Zusammenfassungen."""
+    summaries = await brain.summarizer.get_recent_summaries(limit=7)
+    return {"summaries": summaries}
+
+
+@app.get("/api/assistant/summaries/search")
+async def search_summaries(q: str):
+    """Sucht in allen Zusammenfassungen (Vektor-Suche)."""
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="Kein Suchbegriff")
+    results = await brain.summarizer.search_summaries(q, limit=5)
+    return {"query": q, "results": results}
+
+
+@app.post("/api/assistant/summaries/generate/{date}")
+async def generate_summary(date: str):
+    """Erstellt manuell eine Tages-Zusammenfassung fuer ein bestimmtes Datum."""
+    summary = await brain.summarizer.summarize_day(date)
+    if not summary:
+        return {"date": date, "summary": None, "message": "Keine Konversationen fuer diesen Tag"}
+    return {"date": date, "summary": summary}
+
+
 # ----- Action Planner Endpoints (Phase 4) -----
 
 @app.get("/api/assistant/planner/last")
@@ -249,17 +361,14 @@ async def websocket_endpoint(websocket: WebSocket):
                         await emit_speaking(result["response"])
 
                 elif event == "assistant.feedback":
-                    event_type = message.get("data", {}).get("event_type", "")
-                    response = message.get("data", {}).get("response", "ignored")
-                    delta_map = {
-                        "ignored": -0.05,
-                        "dismissed": -0.10,
-                        "engaged": 0.10,
-                        "thanked": 0.20,
-                    }
-                    delta = delta_map.get(response, 0)
-                    if event_type and delta:
-                        await brain.memory.update_feedback_score(event_type, delta)
+                    # Phase 5: Feedback ueber FeedbackTracker verarbeiten
+                    fb_data = message.get("data", {})
+                    notification_id = fb_data.get("notification_id", "")
+                    event_type = fb_data.get("event_type", "")
+                    feedback_type = fb_data.get("response", fb_data.get("feedback_type", "ignored"))
+                    identifier = notification_id or event_type
+                    if identifier:
+                        await brain.feedback.record_feedback(identifier, feedback_type)
 
                 elif event == "assistant.interrupt":
                     pass  # Fuer spaetere Streaming-Unterbrechung

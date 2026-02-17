@@ -3,13 +3,16 @@ Proactive Manager - Der MindHome Assistant spricht von sich aus.
 Hoert auf Events von Home Assistant / MindHome und entscheidet ob
 eine proaktive Meldung sinnvoll ist.
 
-FIX: self.brain.autonomy.current_level -> self.brain.autonomy.level
-     (Property heisst 'level' in AutonomyManager, nicht 'current_level')
+Phase 5: Vollstaendig mit FeedbackTracker integriert.
+- Adaptive Cooldowns basierend auf Feedback-Score
+- Auto-Timeout fuer unbeantwortete Meldungen
+- Intelligente Filterung pro Event-Typ und Urgency
 """
 
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -62,6 +65,7 @@ class ProactiveManager:
             # LOW - Melden wenn entspannt
             "energy_price_low": (LOW, "Strom ist guenstig"),
             "weather_warning": (LOW, "Wetterwarnung"),
+            "window_open_rain": (LOW, "Fenster offen bei Regen"),
         }
 
     async def start(self):
@@ -72,7 +76,7 @@ class ProactiveManager:
 
         self._running = True
         self._task = asyncio.create_task(self._listen_ha_events())
-        logger.info("Proactive Manager gestartet")
+        logger.info("Proactive Manager gestartet (mit Feedback-Integration)")
 
     async def stop(self):
         """Stoppt den Event Listener."""
@@ -192,8 +196,11 @@ class ProactiveManager:
         elif entity_id.startswith("person."):
             name = new_state.get("attributes", {}).get("friendly_name", entity_id)
             if new_val == "home" and old_val != "home":
+                # Status-Bericht bei Ankunft generieren
+                status = await self._build_arrival_status(name)
                 await self._notify("person_arrived", MEDIUM, {
                     "person": name,
+                    "status_report": status,
                 })
             elif old_val == "home" and new_val != "home":
                 await self._notify("person_left", MEDIUM, {
@@ -221,26 +228,41 @@ class ProactiveManager:
             if level < 2:  # Level 1 = nur Befehle
                 return
 
-        # Cooldown pruefen
+        # Cooldown pruefen (mit adaptivem Cooldown aus Feedback)
+        effective_cooldown = self.cooldown
+        feedback = self.brain.feedback
+
         if urgency not in (CRITICAL, HIGH):
+            # Feedback-basierte Entscheidung
+            decision = await feedback.should_notify(event_type, urgency)
+            if not decision["allow"]:
+                logger.info(
+                    "Meldung unterdrueckt [%s]: %s", event_type, decision["reason"]
+                )
+                return
+            # Adaptiver Cooldown aus Feedback
+            effective_cooldown = decision.get("cooldown", self.cooldown)
+
+            # Cooldown pruefen
             last_time = await self.brain.memory.get_last_notification_time(event_type)
             if last_time:
                 last_dt = datetime.fromisoformat(last_time)
-                if datetime.now() - last_dt < timedelta(seconds=self.cooldown):
+                if datetime.now() - last_dt < timedelta(seconds=effective_cooldown):
                     return
 
-        # Feedback-Score pruefen (zu oft ignoriert?)
-        if urgency == LOW:
-            score = await self.brain.memory.get_feedback_score(event_type)
-            if score < 0.2:
-                return
+        # Phase 6: Activity Engine + Silence Matrix
+        activity_result = await self.brain.activity.should_deliver(urgency)
+        if activity_result["suppress"]:
+            logger.info(
+                "Meldung unterdrueckt [%s]: Aktivitaet=%s, Delivery=%s",
+                event_type, activity_result["activity"], activity_result["delivery"],
+            )
+            return
 
-        # Aktive Stille-Szene pruefen
-        if urgency != CRITICAL:
-            context = await self.brain.context_builder.build()
-            active_scenes = context.get("house", {}).get("active_scenes", [])
-            if any(s.lower() in self.silence_scenes for s in active_scenes):
-                return
+        delivery_method = activity_result["delivery"]
+
+        # Notification-ID generieren (fuer Feedback-Tracking)
+        notification_id = f"notif_{uuid.uuid4().hex[:12]}"
 
         # Meldung generieren
         description = self.event_handlers.get(event_type, (MEDIUM, event_type))[1]
@@ -257,25 +279,154 @@ class ProactiveManager:
 
             text = response.get("message", {}).get("content", description)
 
-            # WebSocket: Proaktive Meldung senden
-            await emit_proactive(text, event_type, urgency)
+            # WebSocket: Proaktive Meldung senden (mit Notification-ID + Delivery)
+            await emit_proactive(text, event_type, urgency, notification_id)
 
             # Cooldown setzen
             await self.brain.memory.set_last_notification_time(event_type)
 
-            logger.info("Proaktive Meldung [%s/%s]: %s", event_type, urgency, text)
+            # Feedback-Tracker: Meldung registrieren (wartet auf Feedback)
+            await feedback.track_notification(notification_id, event_type)
+
+            logger.info(
+                "Proaktive Meldung [%s/%s] (id: %s, delivery: %s, activity: %s): %s",
+                event_type, urgency, notification_id, delivery_method,
+                activity_result["activity"], text,
+            )
 
         except Exception as e:
             logger.error("Fehler bei proaktiver Meldung: %s", e)
 
+    async def _build_arrival_status(self, person_name: str) -> dict:
+        """Baut einen Status-Bericht fuer eine ankommende Person."""
+        status = {"person": person_name}
+        try:
+            # Haus-Status sammeln
+            states = await self.brain.ha.get_states()
+            if not states:
+                return status
+
+            # Wer ist noch zuhause?
+            others_home = []
+            for s in states:
+                if s.get("entity_id", "").startswith("person."):
+                    pname = s.get("attributes", {}).get("friendly_name", "")
+                    if s.get("state") == "home" and pname.lower() != person_name.lower():
+                        others_home.append(pname)
+            status["others_home"] = others_home
+
+            # Temperatur
+            for s in states:
+                if s.get("entity_id", "").startswith("climate."):
+                    attrs = s.get("attributes", {})
+                    status["temperature"] = attrs.get("current_temperature")
+                    break
+
+            # Wetter
+            for s in states:
+                if s.get("entity_id", "").startswith("weather."):
+                    attrs = s.get("attributes", {})
+                    status["weather"] = {
+                        "temp": attrs.get("temperature"),
+                        "condition": s.get("state"),
+                    }
+                    break
+
+            # Offene Fenster/Tueren
+            open_items = []
+            for s in states:
+                eid = s.get("entity_id", "")
+                if ("window" in eid or "door" in eid) and s.get("state") == "on":
+                    name = s.get("attributes", {}).get("friendly_name", eid)
+                    open_items.append(name)
+            if open_items:
+                status["open_items"] = open_items
+
+            # Aktive Lichter
+            lights_on = sum(
+                1 for s in states
+                if s.get("entity_id", "").startswith("light.") and s.get("state") == "on"
+            )
+            status["lights_on"] = lights_on
+
+        except Exception as e:
+            logger.debug("Fehler beim Status-Bericht: %s", e)
+
+        return status
+
+    async def generate_status_report(self, person_name: str = "") -> str:
+        """Generiert einen Jarvis-artigen Status-Bericht (kann auch manuell aufgerufen werden)."""
+        status = await self._build_arrival_status(person_name or "User")
+        prompt = self._build_status_report_prompt(status)
+
+        try:
+            response = await self.brain.ollama.chat(
+                messages=[
+                    {"role": "system", "content": self._get_notification_system_prompt()},
+                    {"role": "user", "content": prompt},
+                ],
+                model=settings.model_fast,
+            )
+            return response.get("message", {}).get("content", "Alles in Ordnung.")
+        except Exception as e:
+            logger.error("Fehler beim Status-Bericht: %s", e)
+            return "Status nicht verfuegbar."
+
+    def _get_person_title(self, person_name: str) -> str:
+        """Gibt die korrekte Anrede fuer eine Person zurueck (Jarvis-Style)."""
+        person_cfg = yaml_config.get("persons", {})
+        titles = person_cfg.get("titles", {})
+
+        # Hauptbenutzer = "Sir"
+        if person_name.lower() == settings.user_name.lower():
+            return titles.get(person_name.lower(), "Sir")
+        # Andere: Titel aus Config oder Vorname
+        return titles.get(person_name.lower(), person_name)
+
+    def _build_status_report_prompt(self, status: dict) -> str:
+        """Baut den Prompt fuer einen Status-Bericht."""
+        person = status.get("person", "User")
+        title = self._get_person_title(person)
+        parts = [f"{person} (Anrede: \"{title}\") ist gerade angekommen. Erstelle einen kurzen Willkommens-Status-Bericht."]
+        parts.append(f"WICHTIG: Sprich die Person mit \"{title}\" an, NICHT mit dem Vornamen.")
+
+        others = status.get("others_home", [])
+        if others:
+            parts.append(f"Ebenfalls zuhause: {', '.join(others)}")
+        else:
+            parts.append("Niemand sonst ist zuhause.")
+
+        temp = status.get("temperature")
+        if temp:
+            parts.append(f"Innentemperatur: {temp}°C")
+
+        weather = status.get("weather", {})
+        if weather:
+            parts.append(f"Wetter: {weather.get('temp', '?')}°C, {weather.get('condition', '?')}")
+
+        open_items = status.get("open_items", [])
+        if open_items:
+            parts.append(f"Offen: {', '.join(open_items)}")
+
+        lights = status.get("lights_on", 0)
+        parts.append(f"Lichter an: {lights}")
+
+        parts.append("Maximal 3 Saetze. Deutsch.")
+        return "\n".join(parts)
+
     def _get_notification_system_prompt(self) -> str:
-        return """Du bist der MindHome Assistant. Formuliere eine KURZE proaktive Meldung.
-Maximal 1-2 Saetze. Direkt, keine Floskeln. Deutsch.
+        return f"""Du bist {settings.assistant_name}, die KI dieses Hauses.
+Dein Stil: Souveraen, knapp, trocken-humorvoll. Wie ein brillanter britischer Butler.
+Formuliere KURZE proaktive Meldungen. Maximal 1-3 Saetze. Deutsch.
+Den Hauptbenutzer sprichst du mit "Sir" an, NICHT mit dem Vornamen.
+Andere Haushaltsmitglieder mit ihrem Namen oder Titel.
 Beispiele:
-- "Jemand hat geklingelt."
-- "Waschmaschine ist fertig."
-- "Lisa ist gerade angekommen."
-- "Achtung: Rauch im Keller erkannt!"
+- "Es hat geklingelt, Sir."
+- "Die Waschmaschine ist fertig. Nur falls es jemanden interessiert."
+- "Willkommen zurueck, Sir. 22 Grad, alles ruhig."
+- "Willkommen, Ms. Lisa. Sir ist im Buero."
+- "Achtung: Rauchmelder Keller. Sofort pruefen."
+- "Sir, der Strom ist gerade guenstig. Guter Zeitpunkt fuer die Waschmaschine."
 """
 
     def _build_notification_prompt(
@@ -287,8 +438,13 @@ Beispiele:
             parts.append(f"Person: {data['person']}")
         if "entity" in data:
             parts.append(f"Entity: {data['entity']}")
+        if "status_report" in data:
+            status = data["status_report"]
+            return self._build_status_report_prompt(status)
 
         parts.append(f"Dringlichkeit: {urgency}")
-        parts.append("Formuliere eine kurze Meldung fuer den Bewohner.")
+
+        # Wer ist gerade zuhause?
+        parts.append("Formuliere eine kurze Meldung. Sprich die Bewohner mit Namen an wenn passend.")
 
         return "\n".join(parts)

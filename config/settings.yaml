@@ -3,9 +3,23 @@
 # ============================================================
 
 assistant:
-  name: "MindHome Assistant"
-  version: "0.3.0"
+  # Name des Assistenten - so stellt er sich vor und so reagiert er
+  # Aendere diesen Namen zu was du willst (z.B. "Jarvis", "Alfred", "Nova")
+  name: "Jarvis"
+  version: "0.8.0"
   language: "de"
+
+# --- Personen und Anrede ---
+# Wie Jarvis die Hausbewohner anspricht
+# Hauptbenutzer (user_name in .env) = "Sir" (Standard)
+# Andere Personen: Name oder Titel
+persons:
+  titles:
+    # key = vorname (kleingeschrieben), value = Anrede
+    # Der Hauptbenutzer (USER_NAME in .env) wird automatisch "Sir"
+    # Weitere Personen hier hinzufuegen:
+    # lisa: "Ms. Lisa"
+    # thomas: "Thomas"
 
 # --- Autonomie-Level ---
 # 1 = Assistent (nur auf Befehle reagieren)
@@ -54,19 +68,19 @@ personality:
 
   time_layers:
     early_morning:  # 05:00-08:00
-      style: "minimal, leise, keine Witze"
+      style: "ruhig, minimal, kein Humor. Kurzes Briefing wenn gefragt."
       max_sentences: 1
     morning:  # 08:00-12:00
-      style: "sachlich, kurz, produktiv"
+      style: "sachlich, effizient. Gelegentlich trocken. Produktiv-Modus."
       max_sentences: 2
     afternoon:  # 12:00-18:00
-      style: "normal, gelegentlich Humor"
+      style: "normal, souveraen. Trockener Humor erlaubt."
       max_sentences: 2
     evening:  # 18:00-22:00
-      style: "entspannt, mehr Humor erlaubt"
+      style: "entspannter, mehr Humor. Darf spitze Bemerkungen machen."
       max_sentences: 3
     night:  # 22:00-05:00
-      style: "nur Notfaelle, absolutminimal"
+      style: "nur Notfaelle, absolute Stille. Fluestern wenn ueberhaupt."
       max_sentences: 1
 
 # --- Proaktive Meldungen ---
@@ -129,6 +143,68 @@ planner:
     - "party"
     - "besuch kommt"
     - "gaeste"
+
+# --- Mood Detector (Phase 3) ---
+mood:
+  # Sekunden zwischen Befehlen = "schnelle Befehle" (Stress-Signal)
+  rapid_command_seconds: 5
+  # Wie schnell Stress abklingt (in Sekunden fuer vollen Abbau)
+  stress_decay_seconds: 300
+  # Ab wie vielen negativen Signalen = "frustriert"
+  frustration_threshold: 3
+  # Ab welcher Uhrzeit gilt "spaet" (muede-Erkennung)
+  tired_hour_start: 23
+  tired_hour_end: 5
+
+# --- Activity Engine + Silence Matrix (Phase 6) ---
+activity:
+  # Entity-IDs (an deine Installation anpassen)
+  entities:
+    media_players:
+      - "media_player.wohnzimmer"
+      - "media_player.fernseher"
+      - "media_player.tv"
+    mic_sensors:
+      - "binary_sensor.mic_active"
+      - "binary_sensor.microphone"
+    bed_sensors:
+      - "binary_sensor.bed_occupancy"
+      - "binary_sensor.bett"
+    pc_sensors:
+      - "binary_sensor.pc_active"
+      - "binary_sensor.computer"
+      - "switch.pc"
+
+  # Schwellwerte fuer Erkennung
+  thresholds:
+    night_start: 22        # Ab wann gilt "Nacht"
+    night_end: 7           # Bis wann gilt "Nacht"
+    guest_person_count: 2  # Ab wie vielen Personen = "Gaeste"
+    focus_min_minutes: 30  # Wie lange PC aktiv fuer "fokussiert"
+
+# --- Feedback Loop (Phase 5) ---
+feedback:
+  # Auto-Timeout: Sekunden ohne Reaktion = "ignored"
+  auto_timeout_seconds: 120
+  # Basis-Cooldown in Sekunden (wird adaptiv angepasst)
+  base_cooldown_seconds: 300
+  # Score-Grenzen fuer Entscheidungen
+  score_suppress: 0.15    # Darunter: nicht mehr senden
+  score_reduce: 0.30      # Darunter: laengerer Cooldown
+  score_normal: 0.50      # Normaler Cooldown
+  score_boost: 0.70       # Darueber: kuerzerer Cooldown
+
+# --- Daily Summarizer + Langzeitgedaechtnis (Phase 7) ---
+summarizer:
+  # Wann laeuft der naechtliche Summary-Job
+  run_hour: 3
+  run_minute: 0
+  # Modell fuer Zusammenfassungen (smart fuer bessere Qualitaet)
+  model: "qwen2.5:14b"
+  # Maximale Token pro Zusammenfassung
+  max_tokens_daily: 512
+  max_tokens_weekly: 384
+  max_tokens_monthly: 512
 
 # --- Context Builder ---
 context:

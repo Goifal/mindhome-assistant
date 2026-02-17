@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     autonomy_level: int = 2
     language: str = "de"
 
+    # Assistent-Identitaet
+    assistant_name: str = "MindHome Assistant"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

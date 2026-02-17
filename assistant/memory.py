@@ -62,7 +62,7 @@ class MemoryManager:
     # ----- Working Memory (Redis) -----
 
     async def add_conversation(self, role: str, content: str):
-        """Speichert eine Nachricht im Working Memory."""
+        """Speichert eine Nachricht im Working Memory + Tages-Archiv."""
         if not self.redis:
             return
 
@@ -71,10 +71,18 @@ class MemoryManager:
             "content": content,
             "timestamp": datetime.now().isoformat(),
         }
+        entry_json = json.dumps(entry)
 
-        await self.redis.lpush("mha:conversations", json.dumps(entry))
-        # Nur die letzten 50 Nachrichten behalten
+        # Working Memory (letzte 50)
+        await self.redis.lpush("mha:conversations", entry_json)
         await self.redis.ltrim("mha:conversations", 0, 49)
+
+        # Tages-Archiv (Phase 7: fuer DailySummarizer)
+        today = datetime.now().strftime("%Y-%m-%d")
+        archive_key = f"mha:archive:{today}"
+        await self.redis.rpush(archive_key, entry_json)
+        # Archiv 30 Tage behalten
+        await self.redis.expire(archive_key, 30 * 86400)
 
     async def get_recent_conversations(self, limit: int = 5) -> list[dict]:
         """Holt die letzten Gespraeche aus dem Working Memory."""
@@ -95,6 +103,19 @@ class MemoryManager:
         if not self.redis:
             return None
         return await self.redis.get(f"mha:context:{key}")
+
+    async def get_conversations_for_date(self, date: str) -> list[dict]:
+        """Holt alle Konversationen eines Tages aus dem Archiv (Phase 7)."""
+        if not self.redis:
+            return []
+
+        try:
+            archive_key = f"mha:archive:{date}"
+            entries = await self.redis.lrange(archive_key, 0, -1)
+            return [json.loads(e) for e in entries]
+        except Exception as e:
+            logger.error("Fehler beim Laden des Archivs fuer %s: %s", date, e)
+            return []
 
     # ----- Episodic Memory (ChromaDB) -----
 
@@ -164,21 +185,27 @@ class MemoryManager:
         )
 
     # ----- Feedback Scores -----
+    # HINWEIS: Feedback-Logik ist seit Phase 5 im FeedbackTracker (feedback.py).
+    # Diese Methoden bleiben als Kompatibilitaets-Brücke erhalten.
 
     async def get_feedback_score(self, event_type: str) -> float:
         """Holt den Feedback-Score fuer einen Event-Typ."""
         if not self.redis:
             return 0.5
-        score = await self.redis.get(f"mha:feedback:{event_type}")
+        # Phase 5: Neues Key-Schema
+        score = await self.redis.get(f"mha:feedback:score:{event_type}")
+        if score is None:
+            # Fallback: altes Key-Schema
+            score = await self.redis.get(f"mha:feedback:{event_type}")
         return float(score) if score else 0.5
 
     async def update_feedback_score(self, event_type: str, delta: float):
-        """Aktualisiert den Feedback-Score."""
+        """Aktualisiert den Feedback-Score (Legacy-Kompatibilitaet)."""
         if not self.redis:
             return
         current = await self.get_feedback_score(event_type)
         new_score = max(0.0, min(1.0, current + delta))
-        await self.redis.set(f"mha:feedback:{event_type}", str(new_score))
+        await self.redis.set(f"mha:feedback:score:{event_type}", str(new_score))
 
     async def close(self):
         """Schliesst Verbindungen."""
